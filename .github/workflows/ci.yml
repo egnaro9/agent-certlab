@@ -16,3 +16,5 @@ jobs:
       - run: pip install -e ".[test]"
       - name: the wedge must separate known-bad from known-good
         run: python -m pytest tests/ -q
+      - name: every committed certification must regrade consistent
+        run: python -m certlab.regrade
