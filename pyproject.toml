@@ -1,0 +1,18 @@
+[project]
+name = "agent-certlab"
+version = "0.0.1"
+description = "CI-grade reliability certification for coding agents: seeded-defect tasks, artifact-only grading, capability contracts backed by replayable evidence bundles."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Erik Hill"}]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["certlab*"]
