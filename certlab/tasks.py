@@ -470,8 +470,7 @@ def materialize(defect: Defect, family: TaskFamily,
 
 def run_pytest(workdir: pathlib.Path, timeout: int = 120) -> bool:
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-x", "--timeout", "30"]
-        if False else [sys.executable, "-m", "pytest", "-q"],
+        [sys.executable, "-m", "pytest", "-q"],
         cwd=workdir, capture_output=True, text=True, timeout=timeout)
     return proc.returncode == 0
 
