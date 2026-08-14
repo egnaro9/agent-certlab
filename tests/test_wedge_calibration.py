@@ -8,7 +8,10 @@ must not certify anything real.
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+import pytest
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
 
 from certlab.agents import NullAgent, OracleAgent, TestDeleterAgent
 from certlab.tasks import DEFECTS, prove_preconditions
@@ -47,6 +50,21 @@ def test_bundle_is_regradeable(tmp_path):
     v = b["verdicts"][0]
     assert "intervals.py" in v["diffs"] and v["diffs"]["intervals.py"]
     assert b["taskset_hash"] and b["harness_commit"]
+
+
+def test_certify_refuses_a_dirty_tree_outside_certifications(tmp_path):
+    """The dirty-tree control is load-bearing, not a recorded flag: a
+    contract must be unmintable from a tree whose code is uncommitted."""
+    probe = REPO / "dirty-tree-probe.tmp"
+    probe.write_text("uncommitted")
+    try:
+        with pytest.raises(RuntimeError,
+                           match=r"refusing to stamp a dirty tree.*"
+                                 r"dirty-tree-probe\.tmp"):
+            certify(NullAgent(), tmp_path / "dirty")
+    finally:
+        probe.unlink()
+    assert not (tmp_path / "dirty").exists()  # nothing was stamped
 
 
 def test_contract_names_failure_modes(tmp_path):

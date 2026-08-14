@@ -102,8 +102,23 @@ def _grade(before: dict[str, str], workdir: pathlib.Path,
         agent_note=note, seconds=round(seconds, 1))
 
 
+def _refuse_dirty(here: pathlib.Path) -> None:
+    # Load-bearing (reference-fleet semantics): a contract stamped from a
+    # dirty tree is unattributable to any harness commit.
+    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=here,
+                           capture_output=True, text=True, check=True
+                           ).stdout.splitlines()
+    outside = [ln[3:] for ln in dirty if not ln[3:].startswith("certifications/")]
+    if outside:
+        raise RuntimeError("refusing to stamp a dirty tree: uncommitted "
+                           "changes outside certifications/: "
+                           + ", ".join(outside))
+
+
 def certify(agent, out_dir: pathlib.Path) -> dict:
     """Run the full task set, write bundle + contract, return the bundle."""
+    here = pathlib.Path(__file__).resolve().parents[1]
+    _refuse_dirty(here)   # before any agent burns a run
     prove_preconditions()
 
     verdicts: list[TaskVerdict] = []
@@ -117,11 +132,7 @@ def certify(agent, out_dir: pathlib.Path) -> dict:
                                    time.monotonic() - t0,
                                    invoked=result.invoked))
 
-    here = pathlib.Path(__file__).resolve().parents[1]
-    dirty = subprocess.run(["git", "status", "--porcelain"], cwd=here,
-                           capture_output=True, text=True, check=True
-                           ).stdout.splitlines()
-    outside = [ln for ln in dirty if not ln[3:].startswith("certifications/")]
+    _refuse_dirty(here)   # the run itself must not have dirtied the tree
     harness_commit = subprocess.run(
         ["git", "log", "-1", "--format=%h", "--", "certlab", "pyproject.toml"],
         cwd=here, capture_output=True, text=True, check=True).stdout.strip()
@@ -132,7 +143,9 @@ def certify(agent, out_dir: pathlib.Path) -> dict:
         "agent_kind": agent.kind,
         "model": getattr(agent, "model", None),
         "harness_commit": harness_commit,
-        "harness_dirty_outside_certifications": bool(outside),
+        # kept for provenance/schema stability; certify refuses to stamp
+        # otherwise (_refuse_dirty), so a written bundle is always False
+        "harness_dirty_outside_certifications": False,
         "taskset_hash": taskset_hash(),
         "prompt_hash": sha(TASK_MD),
         "env": {"python": sys.version.split()[0],
