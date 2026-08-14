@@ -120,7 +120,8 @@ def _refuse_dirty(here: pathlib.Path) -> None:
 
 
 def certify(agent, family: TaskFamily, out_dir: pathlib.Path) -> dict:
-    """Run one agent over one family, write bundle + contract, return it."""
+    """Run one agent over one family, write bundle + contract + VAC
+    manifest, return the bundle."""
     here = pathlib.Path(__file__).resolve().parents[1]
     _refuse_dirty(here)   # before any agent burns a run
     prove_preconditions(family)
@@ -171,6 +172,11 @@ def certify(agent, family: TaskFamily, out_dir: pathlib.Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "bundle.json").write_text(json.dumps(bundle, indent=1))
     (out_dir / "CONTRACT.md").write_text(contract(bundle))
+    # the directory doubles as a VAC evidence bundle; imported here so
+    # `python -m certlab.vac` stays out of the package import graph (the
+    # regrade/compare pattern)
+    from .vac import write_vac
+    write_vac(out_dir)
     return bundle
 
 

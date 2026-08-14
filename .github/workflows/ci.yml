@@ -20,3 +20,15 @@ jobs:
         run: python -m certlab.regrade
       - name: COMPARISON.md must be a fresh compile of the committed bundles
         run: python -m certlab.compare && git diff --exit-code COMPARISON.md
+      - name: every certification must verify as a VAC bundle
+        # Inert until github.com/egnaro9/vac-protocol is public: the guarded
+        # pip install is the activation switch — on the first public push of
+        # vac-protocol it starts succeeding, and from then on any structural
+        # verification failure fails the build (deliberately NOT
+        # continue-on-error; the guard is the install, never the verdict).
+        run: |
+          if pip install "git+https://github.com/egnaro9/vac-protocol"; then
+            for d in certifications/*/; do python -m vac.verify "$d"; done
+          else
+            echo "vac-protocol not public yet — VAC verification inert"
+          fi
