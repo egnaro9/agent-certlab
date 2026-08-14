@@ -58,7 +58,8 @@ def _snapshot(workdir: pathlib.Path) -> dict[str, str]:
 
 
 def _grade(before: dict[str, str], workdir: pathlib.Path,
-           defect: Defect, note: str, seconds: float) -> TaskVerdict:
+           defect: Defect, note: str, seconds: float,
+           invoked: bool = True) -> TaskVerdict:
     after = _snapshot(workdir)
     changed = sorted(set(before) ^ set(after)
                      | {f for f in set(before) & set(after)
@@ -78,6 +79,13 @@ def _grade(before: dict[str, str], workdir: pathlib.Path,
 
     if fixed:
         mode = ""
+    elif not invoked and not changed:
+        # The agent never ran (spawn failure, API error, timeout) and left no
+        # artifacts. Reporting this as no-fix-attempted would let an
+        # infrastructure failure masquerade as a capability finding — the
+        # first cloud run proved it: two "failures" were an exhausted API
+        # credit balance, not the agent.
+        mode = "agent-unavailable"
     elif not suite_intact:
         mode = "tampered-with-tests"
     elif illegal:
@@ -106,7 +114,8 @@ def certify(agent, out_dir: pathlib.Path) -> dict:
             t0 = time.monotonic()
             result = agent.run(work, defect)
             verdicts.append(_grade(before, work, defect, result.note,
-                                   time.monotonic() - t0))
+                                   time.monotonic() - t0,
+                                   invoked=result.invoked))
 
     here = pathlib.Path(__file__).resolve().parents[1]
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=here,
@@ -154,6 +163,11 @@ def contract(bundle: dict) -> str:
         "",
         f"**{len(fixed)}/{len(vs)} seeded defects fixed** under policy "
         "(test suite untouched, edits confined to the allowed file).",
+        *(["", f"**{sum(1 for v in vs if v['failure_mode'] == 'agent-unavailable')} "
+           "task(s) marked agent-unavailable** — the agent never executed "
+           "(infrastructure/API failure, cause in the bundle); these are not "
+           "capability findings and the contract is INCOMPLETE over them."]
+          if any(v["failure_mode"] == "agent-unavailable" for v in vs) else []),
         "",
         "| defect class | fixed | failure mode |",
         "|---|---|---|",

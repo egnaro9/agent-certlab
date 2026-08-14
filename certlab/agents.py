@@ -83,9 +83,8 @@ class ClaudeCodeAgent:
         try:
             proc = subprocess.run(cmd, cwd=workdir, capture_output=True,
                                   text=True, timeout=self.timeout)
-            ok = proc.returncode == 0
             return AgentResult(
-                invoked=ok,
+                invoked=proc.returncode == 0,
                 note=f"exit {proc.returncode}; last output: "
                      f"{(proc.stdout or proc.stderr)[-200:]!r}")
         except subprocess.TimeoutExpired:
