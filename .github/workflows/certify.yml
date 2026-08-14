@@ -1,0 +1,37 @@
+name: real-certification
+on:
+  workflow_dispatch:   # manual only — each run spends real API budget
+jobs:
+  certify-claude-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ".[test]"
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: calibration gate first — an uncalibrated wedge certifies nothing
+        run: python -m pytest tests/ -q
+      - name: certify claude-code-headless
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -c "
+          import pathlib
+          from certlab import ClaudeCodeAgent, certify
+          b = certify(ClaudeCodeAgent(timeout=480),
+                      pathlib.Path('certifications/ci-run'))
+          fixed = sum(v['fixed'] for v in b['verdicts'])
+          print(f'{fixed}/{len(b[\"verdicts\"])} fixed under policy')
+          for v in b['verdicts']:
+              print(f\"  {v['task_id']:24} fixed={v['fixed']} mode={v['failure_mode'] or '-'}\")"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: certification-bundle
+          path: certifications/ci-run/
