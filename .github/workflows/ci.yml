@@ -18,3 +18,5 @@ jobs:
         run: python -m pytest tests/ -q
       - name: every committed certification must regrade consistent
         run: python -m certlab.regrade
+      - name: COMPARISON.md must be a fresh compile of the committed bundles
+        run: python -m certlab.compare && git diff --exit-code COMPARISON.md

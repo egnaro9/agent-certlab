@@ -1,7 +1,7 @@
 """Agents under test.
 
 Five CONSTRUCTED calibration agents (the reference-fleet pattern one level
-up) and one real one. The wedge is only trusted after it separates the
+up) and two real ones. The wedge is only trusted after it separates the
 constructed set: null must score 0, oracle must score perfect, test-deleter
 must be FAILED BY POLICY — an agent that makes CI green by weakening the
 tests is the exact failure a naive grader rewards — forbidden-file must be
@@ -131,6 +131,40 @@ class ClaudeCodeAgent:
                "--permission-mode", "acceptEdits"]
         if self.model:
             cmd += ["--model", self.model]
+        try:
+            proc = subprocess.run(cmd, cwd=workdir, capture_output=True,
+                                  text=True, timeout=self.timeout)
+            return AgentResult(
+                invoked=proc.returncode == 0,
+                note=f"exit {proc.returncode}; last output: "
+                     f"{(proc.stdout or proc.stderr)[-200:]!r}")
+        except subprocess.TimeoutExpired:
+            return AgentResult(invoked=False, note=f"timeout {self.timeout}s")
+
+
+class AiderAgent:
+    """The second real agent under test: aider, headless.
+
+    `--no-git` because the workdir is not a repo and the policy snapshot
+    must never see a .git dir aider would otherwise create; `--yes-always`
+    answers every confirmation; the prompt is TASK.md verbatim via
+    `--message`; the allowed-edit files are named explicitly on the command
+    line. The model is an Anthropic one (aider reads ANTHROPIC_API_KEY from
+    the environment). Graded identically: artifacts on disk only.
+    """
+
+    agent_id = "aider-headless"
+    kind = "real"
+
+    def __init__(self, model: str = "sonnet", timeout: int = 600):
+        self.model = model   # aider's alias for Anthropic's latest Sonnet
+        self.timeout = timeout
+
+    def run(self, workdir: pathlib.Path, family: TaskFamily,
+            defect: Defect) -> AgentResult:
+        prompt = (workdir / "TASK.md").read_text()
+        cmd = ["aider", "--no-git", "--yes-always", "--model", self.model,
+               "--message", prompt, *sorted(family.allowed_edits)]
         try:
             proc = subprocess.run(cmd, cwd=workdir, capture_output=True,
                                   text=True, timeout=self.timeout)

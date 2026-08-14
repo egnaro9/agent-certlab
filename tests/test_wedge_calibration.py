@@ -20,8 +20,8 @@ sys.path.insert(0, str(REPO))
 
 from certlab.agents import (ForbiddenFileAgent, NullAgent, OracleAgent,
                             TestDeleterAgent, UnavailableAgent)
-from certlab.tasks import (DEFECTS, FAMILIES, INTERVALS, Defect, TaskFamily,
-                           materialize, prove_preconditions)
+from certlab.tasks import (DEFECTS, FAMILIES, INTERVALS, LEDGER, Defect,
+                           TaskFamily, materialize, prove_preconditions)
 from certlab.wedge import certify
 
 
@@ -166,5 +166,6 @@ def test_multifile_family_separates_the_calibration_agents(tmp_path):
 
 
 def test_family_hashes_differ_between_families():
-    assert TOY.taskset_hash() != INTERVALS.taskset_hash()
-    assert TOY.prompt_hash() != INTERVALS.prompt_hash()
+    families = [INTERVALS, LEDGER, TOY]
+    assert len({f.taskset_hash() for f in families}) == len(families)
+    assert len({f.prompt_hash() for f in families}) == len(families)

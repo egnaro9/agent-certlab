@@ -1,8 +1,19 @@
 name: real-certification
 on:
   workflow_dispatch:   # manual only — each run spends real API budget
+    inputs:
+      agent:
+        description: real agent to certify
+        type: choice
+        options: [claude-code, aider]
+        default: claude-code
+      family:
+        description: task family to certify against
+        type: choice
+        options: [intervals, ledger]
+        default: intervals
 jobs:
-  certify-claude-code:
+  certify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,23 +26,31 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -e ".[test]"
-      - run: npm install -g @anthropic-ai/claude-code
+      - if: inputs.agent == 'claude-code'
+        run: npm install -g @anthropic-ai/claude-code
+      - if: inputs.agent == 'aider'
+        run: pip install aider-chat
       - name: calibration gate first — an uncalibrated wedge certifies nothing
         run: python -m pytest tests/ -q
-      - name: certify claude-code-headless
+      - name: certify ${{ inputs.agent }} on ${{ inputs.family }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGENT: ${{ inputs.agent }}
+          FAMILY: ${{ inputs.family }}
+          OUT: certifications/${{ inputs.agent }}-${{ inputs.family }}-ci-${{ github.run_id }}
         run: |
           python -c "
-          import pathlib
-          from certlab import INTERVALS, ClaudeCodeAgent, certify
-          b = certify(ClaudeCodeAgent(timeout=480), INTERVALS,
-                      pathlib.Path('certifications/ci-run'))
+          import os, pathlib
+          from certlab import FAMILIES, AiderAgent, ClaudeCodeAgent, certify
+          agent = {'claude-code': ClaudeCodeAgent,
+                   'aider': AiderAgent}[os.environ['AGENT']](timeout=480)
+          b = certify(agent, FAMILIES[os.environ['FAMILY']],
+                      pathlib.Path(os.environ['OUT']))
           fixed = sum(v['fixed'] for v in b['verdicts'])
           print(f'{fixed}/{len(b[\"verdicts\"])} fixed under policy')
           for v in b['verdicts']:
               print(f\"  {v['task_id']:24} fixed={v['fixed']} mode={v['failure_mode'] or '-'}\")"
       - uses: actions/upload-artifact@v4
         with:
-          name: certification-bundle
-          path: certifications/ci-run/
+          name: certification-bundle-${{ inputs.agent }}-${{ inputs.family }}
+          path: certifications/${{ inputs.agent }}-${{ inputs.family }}-ci-${{ github.run_id }}/

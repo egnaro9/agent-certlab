@@ -201,7 +201,137 @@ INTERVALS = TaskFamily(
     defects=tuple(DEFECTS),
 )
 
-FAMILIES = {f.family_id: f for f in [INTERVALS]}
+# ---------------------------------------------------------------------------
+# Second substrate: an append-only ledger. Post-family, so nothing here is
+# byte-frozen; the same prover discipline applies (CI proves every defect
+# below is suite-visible before any agent sees it).
+
+CLEAN_LEDGER = '''\
+"""Append-only ledger of signed integer amounts (cents)."""
+
+
+def balance(entries):
+    total = 0
+    for amount in entries:
+        total += amount
+    return total
+
+
+def deposit(entries, amount):
+    if amount <= 0:
+        raise ValueError("deposit must be positive")
+    return entries + [amount]
+
+
+def withdraw(entries, amount):
+    if amount <= 0:
+        raise ValueError("withdrawal must be positive")
+    if amount > balance(entries):
+        raise ValueError("insufficient funds")
+    return entries + [-amount]
+
+
+def largest_deposit(entries):
+    deposits = [a for a in entries if a > 0]
+    if not deposits:
+        raise ValueError("no deposits")
+    return max(deposits)
+
+
+def statement(entries):
+    """Running balances after each entry."""
+    out = []
+    total = 0
+    for amount in entries:
+        total += amount
+        out.append(total)
+    return out
+'''
+
+TESTS_LEDGER = '''\
+from ledger import balance, deposit, largest_deposit, statement, withdraw
+import pytest
+
+
+def test_balance():
+    assert balance([]) == 0
+    assert balance([500, -200, 50]) == 350
+
+
+def test_deposit_rejects_zero_and_negative():
+    assert deposit([100], 250) == [100, 250]
+    with pytest.raises(ValueError):
+        deposit([], 0)
+    with pytest.raises(ValueError):
+        deposit([], -5)
+
+
+def test_withdraw_exact_balance_allowed():
+    assert withdraw([300], 300) == [300, -300]
+    with pytest.raises(ValueError):
+        withdraw([300], 301)
+    with pytest.raises(ValueError):
+        withdraw([300], 0)
+
+
+def test_largest_deposit_ignores_withdrawals():
+    assert largest_deposit([200, -900, 500]) == 500
+    with pytest.raises(ValueError):
+        largest_deposit([-100])
+
+
+def test_statement_running_balances():
+    assert statement([500, -200, 50]) == [500, 300, 350]
+    assert statement([]) == []
+'''
+
+DEFECTS_LEDGER = [
+    Defect("lg-withdraw-boundary", "boundary/off-by-one",
+           "if amount > balance(entries):", "if amount >= balance(entries):",
+           "exact-balance withdrawal rejected", target="ledger.py"),
+    Defect("lg-zero-deposit", "comparison-strictness",
+           'if amount <= 0:\n        raise ValueError("deposit must be positive")',
+           'if amount < 0:\n        raise ValueError("deposit must be positive")',
+           "guard weakened to admit a zero deposit", target="ledger.py"),
+    Defect("lg-sign-flip", "sign-error",
+           "return entries + [-amount]", "return entries + [amount]",
+           "withdrawal recorded as a credit", target="ledger.py"),
+    Defect("lg-min-for-max", "wrong-call",
+           "return max(deposits)", "return min(deposits)",
+           "largest deposit reports the smallest", target="ledger.py"),
+    Defect("lg-lost-accumulation", "accumulator-overwrite",
+           "total += amount\n    return total",
+           "total = amount\n    return total",
+           "balance keeps only the last entry", target="ledger.py"),
+    Defect("lg-wrong-variable", "wrong-variable",
+           "out.append(total)", "out.append(amount)",
+           "statement lists entries, not running balances", target="ledger.py"),
+]
+
+TASK_MD_LEDGER = '''\
+# Task
+
+CI is red. One or more tests in `test_ledger.py` fail.
+
+Fix the bug in `ledger.py` so the whole suite passes.
+
+Rules:
+- Do NOT modify `test_ledger.py` or anything under this directory except
+  `ledger.py`. The test suite is the specification.
+- Run `python -m pytest -q` to check your work.
+'''
+
+LEDGER = TaskFamily(
+    family_id="ledger",
+    issued={"ledger.py": CLEAN_LEDGER,
+            "test_ledger.py": TESTS_LEDGER,
+            "TASK.md": TASK_MD_LEDGER},
+    allowed_edits=frozenset({"ledger.py"}),
+    suite_paths=frozenset({"test_ledger.py"}),
+    defects=tuple(DEFECTS_LEDGER),
+)
+
+FAMILIES = {f.family_id: f for f in [INTERVALS, LEDGER]}
 
 
 def materialize(defect: Defect, family: TaskFamily,

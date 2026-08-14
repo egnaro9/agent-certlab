@@ -19,17 +19,22 @@ trained defect **model** — a LoRA adapter with a measured, certified defect
 rate — lives in
 [reference-fleet/native](https://github.com/egnaro9/reference-fleet/tree/main/native).
 
-**Shipped certifications** (real runs, committed with evidence):
+**Shipped certifications** (real runs, committed with evidence): the
+mechanically compiled [**COMPARISON.md**](COMPARISON.md) is the index — one
+row per run, every number read from a committed `bundle.json`, regenerated
+and diff-checked in CI. The first two contracts:
 [claude-code-2026-08-14](certifications/claude-code-2026-08-14/CONTRACT.md)
-— 6/6 defect classes fixed under policy, run locally — and
+(run locally) and
 [claude-code-cloud-2026-08-14](certifications/claude-code-cloud-2026-08-14/CONTRACT.md)
-— 6/6 **entirely inside GitHub Actions** via the dispatchable
-[`real-certification` workflow](.github/workflows/certify.yml): calibration
-gate first, then six headless runs on an ephemeral runner, bundle uploaded
-as an artifact. Every committed certification is independently **regraded in
-CI** (`python -m certlab.regrade`): issued files are rematerialized, the
-bundle's diffs reapplied, and every verdict re-earned from artifacts —
-recorded verdicts are never trusted, including ours.
+(**entirely inside GitHub Actions** via the dispatchable
+[`real-certification` workflow](.github/workflows/certify.yml), which takes
+the agent — Claude Code or aider — and the task family as dispatch inputs:
+calibration gate first, then the headless runs on an ephemeral runner,
+bundle uploaded as an artifact). Every committed certification is
+independently **regraded in CI** (`python -m certlab.regrade`): issued files
+are rematerialized, the bundle's diffs reapplied, and every verdict
+re-earned from artifacts — recorded verdicts are never trusted, including
+ours.
 
 ## The three rules that make a certificate mean something
 
@@ -63,8 +68,9 @@ certify(ClaudeCodeAgent(), INTERVALS, pathlib.Path('certifications/my-run'))"
 `certifications/` holds published runs: `bundle.json` (the evidence) and
 `CONTRACT.md` (the human-readable capability contract, failure modes named).
 
-The real-agent adapter drives Claude Code headless (`claude -p`) with tools
-restricted to read/edit/pytest; any agent that can edit files in a directory
-can be adapted in ~20 lines (see `certlab/agents.py`).
+Two real-agent adapters ship: Claude Code headless (`claude -p`, tools
+restricted to read/edit/pytest) and aider headless (`--message --no-git
+--yes-always`, allowed files named explicitly); any agent that can edit
+files in a directory can be adapted in ~20 lines (see `certlab/agents.py`).
 
 MIT.
