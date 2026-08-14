@@ -92,6 +92,7 @@ def test_clamp():
     assert clamp(0, 10, -3) == 0
     assert clamp(0, 10, 12) == 9
     assert clamp(0, 10, 4) == 4
+    assert clamp(0, 10, 10) == 9   # x == hi: the half-open boundary itself
 '''
 
 
