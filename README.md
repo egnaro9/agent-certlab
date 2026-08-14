@@ -56,8 +56,8 @@ recorded verdicts are never trusted, including ours.
 pip install -e ".[test]" && python -m pytest tests/ -q   # calibration first
 python -c "
 import pathlib
-from certlab import ClaudeCodeAgent, certify
-certify(ClaudeCodeAgent(), pathlib.Path('certifications/my-run'))"
+from certlab import INTERVALS, ClaudeCodeAgent, certify
+certify(ClaudeCodeAgent(), INTERVALS, pathlib.Path('certifications/my-run'))"
 ```
 
 `certifications/` holds published runs: `bundle.json` (the evidence) and

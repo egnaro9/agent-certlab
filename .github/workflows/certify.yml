@@ -24,8 +24,8 @@ jobs:
         run: |
           python -c "
           import pathlib
-          from certlab import ClaudeCodeAgent, certify
-          b = certify(ClaudeCodeAgent(timeout=480),
+          from certlab import INTERVALS, ClaudeCodeAgent, certify
+          b = certify(ClaudeCodeAgent(timeout=480), INTERVALS,
                       pathlib.Path('certifications/ci-run'))
           fixed = sum(v['fixed'] for v in b['verdicts'])
           print(f'{fixed}/{len(b[\"verdicts\"])} fixed under policy')

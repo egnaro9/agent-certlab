@@ -9,7 +9,9 @@ record; any divergence — a flipped verdict, an altered diff, a diff that no
 longer applies — is named and the exit is nonzero. If the hashes do NOT
 match, the bundle predates the current task set: report "cannot regrade at
 this code version" explicitly and exit zero — an old bundle is not a
-mismatch, and guessing is worse than refusing.
+mismatch, and guessing is worse than refusing. Bundles are family-scoped;
+a bundle with no family field predates families and is the founding
+"intervals" family, and an unknown family gets the same honest refusal.
 
 `python -m certlab.regrade [bundle.json ...]` — no arguments regrades every
 committed certifications/*/bundle.json.
@@ -24,7 +26,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 
-from .tasks import DEFECTS, TASK_MD, materialize, sha, taskset_hash
+from .tasks import FAMILIES, materialize
 from .wedge import _grade, _snapshot
 
 _HUNK = re.compile(r"@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
@@ -86,14 +88,20 @@ class Report:
 def regrade_bundle(bundle_path: pathlib.Path) -> Report:
     bundle = json.loads(bundle_path.read_text())
     name = bundle_path.parent.name
-    current = {"taskset_hash": taskset_hash(), "prompt_hash": sha(TASK_MD)}
+    family = FAMILIES.get(bundle.get("family", "intervals"))
+    if family is None:
+        return Report(name, "stale-code",
+                      "cannot regrade at this code version: unknown family "
+                      f"{bundle.get('family')!r}")
+    current = {"taskset_hash": family.taskset_hash(),
+               "prompt_hash": family.prompt_hash()}
     stale = [k for k in current if bundle.get(k) != current[k]]
     if stale:
         return Report(name, "stale-code",
                       "cannot regrade at this code version: " + "; ".join(
                           f"{k} {bundle.get(k)} != current {current[k]}"
                           for k in stale))
-    defects = {d.task_id: d for d in DEFECTS}
+    defects = {d.task_id: d for d in family.defects}
     recorded = {v["task_id"]: v for v in bundle["verdicts"]}
     mismatches = [f"missing verdict for {t}" for t in defects
                   if t not in recorded]
@@ -102,11 +110,13 @@ def regrade_bundle(bundle_path: pathlib.Path) -> Report:
         for task_id, v in recorded.items():
             if task_id not in defects:
                 continue
-            work = materialize(defects[task_id], pathlib.Path(td))
+            work = materialize(defects[task_id], family, pathlib.Path(td))
             before = _snapshot(work)
             try:
                 for fname, diff in v["diffs"].items():
-                    (work / fname).write_text(
+                    target = work / fname
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(
                         apply_unified_diff(before.get(fname, ""), diff))
             except ValueError as e:
                 mismatches.append(f"{task_id}: recorded diff does not "
@@ -115,7 +125,8 @@ def regrade_bundle(bundle_path: pathlib.Path) -> Report:
             # `invoked` is agent-runtime provenance, not reconstructible
             # from artifacts; take it from the record so every
             # artifact-derived field is re-earned
-            rv = _grade(before, work, defects[task_id], v["agent_note"], 0.0,
+            rv = _grade(family, before, work, defects[task_id],
+                        v["agent_note"], 0.0,
                         invoked=v["failure_mode"] != "agent-unavailable")
             for f in _COMPARED:
                 if getattr(rv, f) != v[f]:

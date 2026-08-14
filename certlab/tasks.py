@@ -1,13 +1,19 @@
-"""Seeded-defect tasks: small real codebases, one known defect each.
+"""Seeded-defect task families: small real codebases, one known defect each.
 
 The instrument discipline (carried from the reference-fleet and SPIRE64 work):
 before any agent sees a task, the harness PROVES the two inputs differ —
 the clean tree passes its test suite and the seeded tree fails it. A task
 that cannot demonstrate that proves nothing about any agent.
 
+A TaskFamily is one certifiable substrate: the issued files (clean sources,
+protected suite, TASK.md), the edit policy, and the defects seeded into it.
 Each task materializes into a fresh working directory containing the seeded
 (broken) code, its untouched test suite, and TASK.md. Ground truth (the clean
 source) never enters the working directory.
+
+The founding `intervals` family predates the family field: its literals
+(CLEAN_INTERVALS, TESTS_INTERVALS, DEFECTS, TASK_MD) are byte-frozen so the
+shipped 2026-08-14 bundles stay regradeable forever.
 """
 
 from __future__ import annotations
@@ -103,6 +109,9 @@ class Defect:
     old: str                   # exact source substring to replace
     new: str                   # the seeded bug
     description: str           # what a reviewer would call it
+    # the relpath the defect is seeded into; the default keeps the founding
+    # family's six definitions byte-identical (they predate the field)
+    target: str = "intervals.py"
 
 
 # Six defects across distinct classes, all single-edit, all provably
@@ -152,22 +161,62 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-def taskset_hash() -> str:
-    blob = CLEAN_INTERVALS + TESTS_INTERVALS + "".join(
-        d.task_id + d.old + d.new for d in DEFECTS)
-    return sha(blob)
+@dataclass(frozen=True)
+class TaskFamily:
+    """One substrate a certification run is scoped to. `issued` maps relpath
+    -> content for everything the agent receives — clean sources, the
+    protected suite file(s), and TASK.md; materialize seeds the defect on
+    the way out, so ground truth never enters a working directory."""
+    family_id: str
+    issued: dict[str, str]
+    allowed_edits: frozenset[str]   # relpaths the agent may modify
+    suite_paths: frozenset[str]     # protected: must stay byte-identical
+    defects: tuple[Defect, ...]
+
+    @property
+    def task_md(self) -> str:
+        return self.issued["TASK.md"]
+
+    def taskset_hash(self) -> str:
+        # substrate (sorted relpaths, TASK.md excluded — that is
+        # prompt_hash) + defect specs; for the intervals family this
+        # reproduces the pre-family hash byte-for-byte, which is what keeps
+        # the shipped 2026-08-14 bundles regradeable
+        blob = "".join(self.issued[p] for p in sorted(self.issued)
+                       if p != "TASK.md")
+        blob += "".join(d.task_id + d.old + d.new for d in self.defects)
+        return sha(blob)
+
+    def prompt_hash(self) -> str:
+        return sha(self.task_md)
 
 
-def materialize(defect: Defect, root: pathlib.Path) -> pathlib.Path:
+INTERVALS = TaskFamily(
+    family_id="intervals",
+    issued={"intervals.py": CLEAN_INTERVALS,
+            "test_intervals.py": TESTS_INTERVALS,
+            "TASK.md": TASK_MD},
+    allowed_edits=frozenset({"intervals.py"}),
+    suite_paths=frozenset({"test_intervals.py"}),
+    defects=tuple(DEFECTS),
+)
+
+FAMILIES = {f.family_id: f for f in [INTERVALS]}
+
+
+def materialize(defect: Defect, family: TaskFamily,
+                root: pathlib.Path) -> pathlib.Path:
     """Write the seeded task into root/<task_id> and return the workdir."""
-    assert defect.old in CLEAN_INTERVALS, f"{defect.task_id}: stale defect spec"
-    seeded = CLEAN_INTERVALS.replace(defect.old, defect.new, 1)
-    assert seeded != CLEAN_INTERVALS
+    clean = family.issued[defect.target]
+    assert defect.old in clean, f"{defect.task_id}: stale defect spec"
+    seeded = clean.replace(defect.old, defect.new, 1)
+    assert seeded != clean
     work = root / defect.task_id
     work.mkdir(parents=True)
-    (work / "intervals.py").write_text(seeded)
-    (work / "test_intervals.py").write_text(TESTS_INTERVALS)
-    (work / "TASK.md").write_text(TASK_MD)
+    for rel, content in family.issued.items():
+        path = work / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(seeded if rel == defect.target else content)
     return work
 
 
@@ -179,17 +228,18 @@ def run_pytest(workdir: pathlib.Path, timeout: int = 120) -> bool:
     return proc.returncode == 0
 
 
-def prove_preconditions() -> None:
+def prove_preconditions(family: TaskFamily) -> None:
     """Clean passes; every seeded task fails. Refuses to certify otherwise."""
     with tempfile.TemporaryDirectory() as td:
         clean = pathlib.Path(td) / "clean"
-        clean.mkdir()
-        (clean / "intervals.py").write_text(CLEAN_INTERVALS)
-        (clean / "test_intervals.py").write_text(TESTS_INTERVALS)
+        for rel, content in family.issued.items():
+            path = clean / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
         if not run_pytest(clean):
             raise RuntimeError("clean tree FAILS its own suite — substrate broken")
-        for d in DEFECTS:
-            work = materialize(d, pathlib.Path(td) / "seeded")
+        for d in family.defects:
+            work = materialize(d, family, pathlib.Path(td) / "seeded")
             if run_pytest(work):
                 raise RuntimeError(
                     f"{d.task_id}: seeded defect passes the suite — the suite "

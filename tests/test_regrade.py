@@ -18,9 +18,18 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from certlab.regrade import apply_unified_diff, main, regrade_bundle
-from certlab.tasks import CLEAN_INTERVALS, DEFECTS
+from certlab.tasks import CLEAN_INTERVALS, DEFECTS, INTERVALS
 
 SHIPPED = sorted((REPO / "certifications").glob("*/bundle.json"))
+
+
+def test_intervals_hashes_are_pinned_forever():
+    """The shipped 2026-08-14 bundles carry exactly these two hashes and no
+    family field. Any drift in CLEAN_INTERVALS, TESTS_INTERVALS, DEFECTS, or
+    TASK_MD — or in the hashing that feeds them — makes those bundles
+    unregradeable at this code version. Caught here, not in the field."""
+    assert INTERVALS.taskset_hash() == "61eb01a1a3b34dd3"
+    assert INTERVALS.prompt_hash() == "2c582137a10a5640"
 
 
 def _udiff(a, b):
@@ -55,6 +64,8 @@ def test_applier_refuses_a_diff_that_does_not_match():
 def test_shipped_bundles_regrade_consistent():
     assert len(SHIPPED) == 2  # claude-code + claude-code-cloud, 2026-08-14
     for p in SHIPPED:
+        # both predate task families: no family field, read as intervals
+        assert "family" not in json.loads(p.read_text())
         r = regrade_bundle(p)
         assert r.status == "consistent", (p, r.mismatches)
 
@@ -95,6 +106,21 @@ def test_altered_diff_is_named(tmp_path):
 
 def test_foreign_code_version_is_refused_not_guessed(tmp_path):
     p = _tampered(tmp_path, lambda b: b.update(taskset_hash="0" * 16))
+    r = regrade_bundle(p)
+    assert r.status == "stale-code"
+    assert "cannot regrade at this code version" in r.detail
+    assert not r.mismatches
+    assert main([str(p)]) == 0
+
+
+def test_explicit_intervals_family_regrades_consistent(tmp_path):
+    # a new-style bundle naming its family takes the same path as a legacy one
+    p = _tampered(tmp_path, lambda b: b.update(family="intervals"))
+    assert regrade_bundle(p).status == "consistent"
+
+
+def test_unknown_family_is_refused_not_guessed(tmp_path):
+    p = _tampered(tmp_path, lambda b: b.update(family="not-a-family"))
     r = regrade_bundle(p)
     assert r.status == "stale-code"
     assert "cannot regrade at this code version" in r.detail

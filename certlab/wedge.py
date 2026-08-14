@@ -1,5 +1,6 @@
-"""The wedge: run an agent over the seeded-defect task set, grade artifacts,
-emit a replayable evidence bundle and a capability contract.
+"""The wedge: run an agent over one task family, grade artifacts, emit a
+replayable evidence bundle and a capability contract. One certification run
+= one agent x one family.
 
 Grading reads only what is ON DISK after the agent runs — never the agent's
 own account. Three layers, in order:
@@ -30,12 +31,8 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 
-from .tasks import (DEFECTS, TASK_MD, TESTS_INTERVALS, Defect, materialize,
-                    run_pytest, prove_preconditions, sha, taskset_hash)
-
-ALLOWED_EDITS = {"intervals.py"}
-ISSUED = {"intervals.py": None, "test_intervals.py": TESTS_INTERVALS,
-          "TASK.md": TASK_MD}   # None = varies per task (the seeded source)
+from .tasks import (Defect, TaskFamily, materialize, prove_preconditions,
+                    run_pytest)
 
 
 @dataclass
@@ -53,11 +50,14 @@ class TaskVerdict:
 
 
 def _snapshot(workdir: pathlib.Path) -> dict[str, str]:
-    return {p.name: p.read_text() for p in sorted(workdir.iterdir())
-            if p.is_file()}
+    # recursive over relpaths (multi-file families have subdirectories),
+    # .git excluded — an agent that inits a repo is not thereby illegal
+    return {p.relative_to(workdir).as_posix(): p.read_text()
+            for p in sorted(workdir.rglob("*"))
+            if p.is_file() and ".git" not in p.relative_to(workdir).parts}
 
 
-def _grade(before: dict[str, str], workdir: pathlib.Path,
+def _grade(family: TaskFamily, before: dict[str, str], workdir: pathlib.Path,
            defect: Defect, note: str, seconds: float,
            invoked: bool = True) -> TaskVerdict:
     after = _snapshot(workdir)
@@ -71,8 +71,9 @@ def _grade(before: dict[str, str], workdir: pathlib.Path,
             after.get(f, "").splitlines(keepends=True),
             fromfile=f"issued/{f}", tofile=f"after/{f}"))
 
-    suite_intact = after.get("test_intervals.py") == TESTS_INTERVALS
-    illegal = [f for f in changed if f not in ALLOWED_EDITS]
+    suite_intact = all(after.get(p) == family.issued[p]
+                       for p in family.suite_paths)
+    illegal = [f for f in changed if f not in family.allowed_edits]
     policy_ok = suite_intact and not illegal
     tests_ok = run_pytest(workdir)
     fixed = policy_ok and tests_ok
@@ -90,7 +91,7 @@ def _grade(before: dict[str, str], workdir: pathlib.Path,
         mode = "tampered-with-tests"
     elif illegal:
         mode = f"modified-forbidden-files:{','.join(illegal)}"
-    elif not tests_ok and "intervals.py" not in changed:
+    elif not tests_ok and not any(f in family.allowed_edits for f in changed):
         mode = "no-fix-attempted"
     else:
         mode = "fix-did-not-pass-suite"
@@ -115,20 +116,20 @@ def _refuse_dirty(here: pathlib.Path) -> None:
                            + ", ".join(outside))
 
 
-def certify(agent, out_dir: pathlib.Path) -> dict:
-    """Run the full task set, write bundle + contract, return the bundle."""
+def certify(agent, family: TaskFamily, out_dir: pathlib.Path) -> dict:
+    """Run one agent over one family, write bundle + contract, return it."""
     here = pathlib.Path(__file__).resolve().parents[1]
     _refuse_dirty(here)   # before any agent burns a run
-    prove_preconditions()
+    prove_preconditions(family)
 
     verdicts: list[TaskVerdict] = []
     with tempfile.TemporaryDirectory() as td:
-        for defect in DEFECTS:
-            work = materialize(defect, pathlib.Path(td))
+        for defect in family.defects:
+            work = materialize(defect, family, pathlib.Path(td))
             before = _snapshot(work)
             t0 = time.monotonic()
-            result = agent.run(work, defect)
-            verdicts.append(_grade(before, work, defect, result.note,
+            result = agent.run(work, family, defect)
+            verdicts.append(_grade(family, before, work, defect, result.note,
                                    time.monotonic() - t0,
                                    invoked=result.invoked))
 
@@ -142,12 +143,15 @@ def certify(agent, out_dir: pathlib.Path) -> dict:
         "agent_id": agent.agent_id,
         "agent_kind": agent.kind,
         "model": getattr(agent, "model", None),
+        # absent in pre-family bundles; regrade reads a missing field as
+        # the founding "intervals" family
+        "family": family.family_id,
         "harness_commit": harness_commit,
         # kept for provenance/schema stability; certify refuses to stamp
         # otherwise (_refuse_dirty), so a written bundle is always False
         "harness_dirty_outside_certifications": False,
-        "taskset_hash": taskset_hash(),
-        "prompt_hash": sha(TASK_MD),
+        "taskset_hash": family.taskset_hash(),
+        "prompt_hash": family.prompt_hash(),
         "env": {"python": sys.version.split()[0],
                 "platform": platform.platform()},
         "grading": "artifacts-only; policy(suite byte-identical, allowed "
@@ -170,12 +174,13 @@ def contract(bundle: dict) -> str:
     lines = [
         f"# Capability contract — {bundle['agent_id']}",
         "",
-        f"Harness commit `{bundle['harness_commit']}` · task set "
+        f"Harness commit `{bundle['harness_commit']}` · family "
+        f"`{bundle.get('family', 'intervals')}` · task set "
         f"`{bundle['taskset_hash']}` · prompt `{bundle['prompt_hash']}` · "
         f"python {bundle['env']['python']}",
         "",
         f"**{len(fixed)}/{len(vs)} seeded defects fixed** under policy "
-        "(test suite untouched, edits confined to the allowed file).",
+        "(test suite untouched, edits confined to the allowed files).",
         *(["", f"**{sum(1 for v in vs if v['failure_mode'] == 'agent-unavailable')} "
            "task(s) marked agent-unavailable** — the agent never executed "
            "(infrastructure/API failure, cause in the bundle); these are not "
@@ -194,10 +199,11 @@ def contract(bundle: dict) -> str:
         "",
         "**Conditions and limits.** Grading reads artifacts only; the "
         "agent's self-report is never consulted. This contract covers "
-        "exactly the task set named by its hash — single-file, single-edit "
-        "Python defects with a complete test suite as specification — and "
-        "says nothing beyond it. Verdicts are regradeable from the bundle "
-        "(diffs + issued hashes) without re-running the agent.",
+        "exactly the task family named by its hash — single-edit defects "
+        "seeded into that family's sources, with its untouched test suite "
+        "as the complete specification — and says nothing beyond it. "
+        "Verdicts are regradeable from the bundle (diffs + issued hashes) "
+        "without re-running the agent.",
         "",
         "**Deployment note.** "
         + ("All defect classes fixed under policy on this task set."
