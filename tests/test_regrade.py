@@ -63,11 +63,17 @@ def test_applier_refuses_a_diff_that_does_not_match():
         apply_unified_diff("alpha\ngamma\n", d)
 
 
+PRE_FAMILY = {"claude-code-2026-08-14", "claude-code-cloud-2026-08-14"}
+
+
 def test_shipped_bundles_regrade_consistent():
-    assert len(SHIPPED) == 2  # claude-code + claude-code-cloud, 2026-08-14
+    # every committed certification, present and future — a count pin here
+    # would turn each new contract into a CI failure
+    assert len(SHIPPED) >= 2
     for p in SHIPPED:
-        # both predate task families: no family field, read as intervals
-        assert "family" not in json.loads(p.read_text())
+        if p.parent.name in PRE_FAMILY:
+            # these predate task families: no family field, read as intervals
+            assert "family" not in json.loads(p.read_text())
         r = regrade_bundle(p)
         assert r.status == "consistent", (p, r.mismatches)
 

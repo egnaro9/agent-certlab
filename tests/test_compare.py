@@ -71,7 +71,8 @@ def test_shipped_comparison_is_fresh():
     (and in CI via `git diff --exit-code`)."""
     committed = (REPO / "COMPARISON.md").read_text()
     assert committed == compile_comparison(REPO / "certifications")
-    # the two shipped 2026-08-14 runs are rows, mechanically
-    assert "| [claude-code-2026-08-14]" in committed
-    assert "| [claude-code-cloud-2026-08-14]" in committed
-    assert committed.count("| 6/6 |") == 2
+    # one row per committed bundle, mechanically — no pinned run count
+    bundles = sorted((REPO / "certifications").glob("*/bundle.json"))
+    assert len(bundles) >= 2
+    for b in bundles:
+        assert f"| [{b.parent.name}]" in committed
