@@ -17,8 +17,10 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from certlab.agents import OracleAgent
 from certlab.regrade import apply_unified_diff, main, regrade_bundle
-from certlab.tasks import CLEAN_INTERVALS, DEFECTS, INTERVALS
+from certlab.tasks import CLEAN_INTERVALS, DEFECTS, INTERVALS, LEDGER
+from certlab.wedge import certify
 
 SHIPPED = sorted((REPO / "certifications").glob("*/bundle.json"))
 
@@ -117,6 +119,21 @@ def test_explicit_intervals_family_regrades_consistent(tmp_path):
     # a new-style bundle naming its family takes the same path as a legacy one
     p = _tampered(tmp_path, lambda b: b.update(family="intervals"))
     assert regrade_bundle(p).status == "consistent"
+
+
+def test_ledger_bundle_regrades_consistent_and_tampering_is_caught(tmp_path):
+    """End-to-end over the multi-file family: a fresh ledger bundle (diffs
+    under a subdirectory) regrades consistent, and the regrader is PROVEN
+    able to fire on it — a flipped ledger verdict is named, not absorbed."""
+    b = certify(OracleAgent(), LEDGER, tmp_path / "ledger-oracle")
+    assert b["family"] == "ledger"
+    p = tmp_path / "ledger-oracle" / "bundle.json"
+    assert regrade_bundle(p).status == "consistent"
+    b["verdicts"][0]["fixed"] = False
+    p.write_text(json.dumps(b))
+    r = regrade_bundle(p)
+    assert r.status == "mismatch"
+    assert any("fixed" in m for m in r.mismatches)
 
 
 def test_unknown_family_is_refused_not_guessed(tmp_path):

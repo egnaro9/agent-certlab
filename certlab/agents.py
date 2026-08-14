@@ -20,14 +20,34 @@ from .tasks import Defect, TaskFamily
 
 def _shadow_conftest(family: TaskFamily) -> str:
     """conftest.py that preloads every editable module CLEAN into
-    sys.modules, shadowing the seeded files without touching them."""
-    parts = ["import sys, types\n"]
-    for rel in sorted(family.allowed_edits):
-        name = rel[:-3].replace("/", ".")
-        parts.append(f"_m = types.ModuleType({name!r})\n"
-                     f"exec({family.issued[rel]!r}, _m.__dict__)\n"
-                     f"sys.modules[{name!r}] = _m\n")
-    return "".join(parts)
+    sys.modules, shadowing the seeded files without touching them. Every
+    shadowed name is seeded with None first, so a premature import inside a
+    dependency chain RAISES instead of silently loading a seeded file from
+    disk; the sources are then exec'd to a fixpoint, so chains land clean
+    in any order (cycles fail loudly — the shadow must never half-work)."""
+    srcs = {rel[:-3].replace("/", "."): family.issued[rel]
+            for rel in sorted(family.allowed_edits)}
+    return (f"import importlib, sys, types\n_SRCS = {srcs!r}\n"
+            "for _n in _SRCS:\n"
+            "    sys.modules[_n] = None\n"
+            "_pending = dict(_SRCS)\n"
+            "while _pending:\n"
+            "    _stuck = True\n"
+            "    for _n in sorted(_pending):\n"
+            "        _m = types.ModuleType(_n)\n"
+            "        try:\n"
+            "            exec(_pending[_n], _m.__dict__)\n"
+            "        except ImportError:\n"
+            "            continue\n"
+            "        sys.modules[_n] = _m\n"
+            "        if '.' in _n:\n"
+            "            _pkg, _, _child = _n.rpartition('.')\n"
+            "            setattr(importlib.import_module(_pkg), _child, _m)\n"
+            "        del _pending[_n]\n"
+            "        _stuck = False\n"
+            "    if _stuck:\n"
+            "        raise ImportError('shadow conftest cannot order: '\n"
+            "                          + ', '.join(sorted(_pending)))\n")
 
 
 @dataclass

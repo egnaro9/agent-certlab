@@ -65,6 +65,13 @@ from certlab import INTERVALS, ClaudeCodeAgent, certify
 certify(ClaudeCodeAgent(), INTERVALS, pathlib.Path('certifications/my-run'))"
 ```
 
+Two task families ship (`certlab.FAMILIES`): `intervals`, a single-module
+substrate, and `ledger`, a three-module package (`models` → `validate` →
+`report`) whose defects include genuinely cross-file cases — one seeded in
+`models.py` that only the `validate`/`report` call paths can fail on, and one
+whose policy-legal-but-wrong fix in `report.py` the validate-direct tests
+reject, pinning the fix to the file the defect lives in.
+
 `certifications/` holds published runs: `bundle.json` (the evidence) and
 `CONTRACT.md` (the human-readable capability contract, failure modes named).
 

@@ -202,110 +202,223 @@ INTERVALS = TaskFamily(
 )
 
 # ---------------------------------------------------------------------------
-# Second substrate: an append-only ledger. Post-family, so nothing here is
-# byte-frozen; the same prover discipline applies (CI proves every defect
-# below is suite-visible before any agent sees it).
+# Second substrate: a multi-file ledger package with a real dependency chain
+# (models -> validate -> report). Post-family, so nothing here is byte-frozen;
+# the same prover discipline applies. Two defects are deliberately cross-file:
+# lg-debit-sign is seeded in models.py but only the validate/report call paths
+# can fail on it, and lg-opening-ignored admits a policy-LEGAL compensating
+# edit in report.py that the validate-direct tests reject — the suite pins
+# the fix to the file the defect lives in.
 
-CLEAN_LEDGER = '''\
-"""Append-only ledger of signed integer amounts (cents)."""
+LEDGER_MODELS = '''\
+"""Ledger entries: (day, signed_amount_cents, kind) tuples.
 
+Debits are stored negative; every downstream sum just adds.
+"""
 
-def balance(entries):
-    total = 0
-    for amount in entries:
-        total += amount
-    return total
-
-
-def deposit(entries, amount):
-    if amount <= 0:
-        raise ValueError("deposit must be positive")
-    return entries + [amount]
+KINDS = ("credit", "debit")
 
 
-def withdraw(entries, amount):
-    if amount <= 0:
-        raise ValueError("withdrawal must be positive")
-    if amount > balance(entries):
-        raise ValueError("insufficient funds")
-    return entries + [-amount]
+def entry(day, amount_cents, kind):
+    """Build a normalized entry. Amounts arrive positive; the sign is the
+    kind's job, applied exactly here and nowhere else."""
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind: {kind!r}")
+    if amount_cents <= 0:
+        raise ValueError("amount_cents must be positive")
+    signed = amount_cents if kind == "credit" else -amount_cents
+    return (day, signed, kind)
 
 
-def largest_deposit(entries):
-    deposits = [a for a in entries if a > 0]
-    if not deposits:
-        raise ValueError("no deposits")
-    return max(deposits)
+def day_of(e):
+    return e[0]
 
 
-def statement(entries):
-    """Running balances after each entry."""
-    out = []
-    total = 0
-    for amount in entries:
-        total += amount
-        out.append(total)
-    return out
+def signed_amount(e):
+    return e[1]
+'''
+
+LEDGER_VALIDATE = '''\
+"""Invariants a ledger must satisfy before anything may report on it."""
+
+from ledger.models import day_of, signed_amount
+
+
+def is_ordered(entries):
+    """Days never decrease; several entries on one day are legal."""
+    days = [day_of(e) for e in entries]
+    return all(a <= b for a, b in zip(days, days[1:]))
+
+
+def running_balances(entries, opening=0):
+    total = opening
+    balances = []
+    for e in entries:
+        total += signed_amount(e)
+        balances.append(total)
+    return balances
+
+
+def check(entries, opening=0):
+    """Raise ValueError naming the first violated invariant."""
+    if not is_ordered(entries):
+        raise ValueError("entries out of order")
+    for i, b in enumerate(running_balances(entries, opening)):
+        if b < 0:
+            raise ValueError(f"balance below zero after entry {i}")
+'''
+
+LEDGER_REPORT = '''\
+"""Aggregation over validated ledgers: check first, then sum."""
+
+from ledger.models import day_of, signed_amount
+from ledger.validate import check, running_balances
+
+
+def closing_balance(entries, opening=0):
+    check(entries, opening)
+    balances = running_balances(entries, opening)
+    return balances[-1] if balances else opening
+
+
+def daily_totals(entries, opening=0):
+    check(entries, opening)
+    totals = {}
+    for e in entries:
+        totals[day_of(e)] = totals.get(day_of(e), 0) + signed_amount(e)
+    return totals
+
+
+def largest_debit(entries, opening=0):
+    """The biggest single debit, as a positive magnitude (0 if none)."""
+    check(entries, opening)
+    debits = [signed_amount(e) for e in entries if signed_amount(e) < 0]
+    return -min(debits) if debits else 0
 '''
 
 TESTS_LEDGER = '''\
-from ledger import balance, deposit, largest_deposit, statement, withdraw
+from ledger.models import day_of, entry, signed_amount
+from ledger.report import closing_balance, daily_totals, largest_debit
+from ledger.validate import check, is_ordered, running_balances
 import pytest
 
 
-def test_balance():
-    assert balance([]) == 0
-    assert balance([500, -200, 50]) == 350
+# models, exercised directly: construction rules only. The debit sign
+# convention is deliberately pinned downstream (validate/report), so a sign
+# defect here surfaces only through the cross-module call paths.
 
-
-def test_deposit_rejects_zero_and_negative():
-    assert deposit([100], 250) == [100, 250]
+def test_models_rejects_unknown_kind():
     with pytest.raises(ValueError):
-        deposit([], 0)
+        entry(1, 100, "transfer")
+
+
+def test_models_rejects_nonpositive_amount():
     with pytest.raises(ValueError):
-        deposit([], -5)
-
-
-def test_withdraw_exact_balance_allowed():
-    assert withdraw([300], 300) == [300, -300]
+        entry(1, 0, "credit")
     with pytest.raises(ValueError):
-        withdraw([300], 301)
+        entry(1, -5, "debit")
+
+
+def test_models_accessors():
+    e = entry(3, 250, "credit")
+    assert day_of(e) == 3
+    assert signed_amount(e) == 250
+
+
+# validate, exercised directly (these pin defects to validate.py: a
+# compensating edit at the report call sites cannot green them)
+
+def test_validate_ordering_allows_same_day():
+    a, b = entry(1, 100, "credit"), entry(1, 40, "debit")
+    assert is_ordered([a, b])
+    assert not is_ordered([b, entry(0, 10, "credit")])
+
+
+def test_validate_running_balances_respects_opening():
+    entries = [entry(1, 100, "credit"), entry(2, 30, "debit")]
+    assert running_balances(entries) == [100, 70]
+    assert running_balances(entries, opening=500) == [600, 570]
+
+
+def test_validate_check_allows_zero_touch():
+    # spending down to exactly zero is a legal ledger
+    check([entry(1, 100, "credit"), entry(2, 100, "debit")])
+
+
+def test_validate_check_names_the_violation():
+    with pytest.raises(ValueError, match="out of order"):
+        check([entry(2, 100, "credit"), entry(1, 50, "credit")])
+    with pytest.raises(ValueError, match="below zero"):
+        check([entry(1, 100, "credit"), entry(2, 150, "debit")])
+    # an opening balance can be the only thing keeping a ledger legal
+    check([entry(1, 100, "debit")], opening=100)
+
+
+# report: the cross-module paths — report -> validate -> models
+
+def test_report_closing_balance():
+    entries = [entry(1, 500, "credit"), entry(2, 125, "debit"),
+               entry(2, 75, "debit")]
+    assert closing_balance(entries) == 300
+    assert closing_balance([], opening=40) == 40
+    assert closing_balance(entries, opening=100) == 400
+
+
+def test_report_rejects_invalid_ledgers():
     with pytest.raises(ValueError):
-        withdraw([300], 0)
-
-
-def test_largest_deposit_ignores_withdrawals():
-    assert largest_deposit([200, -900, 500]) == 500
+        closing_balance([entry(1, 50, "debit")])   # would go below zero
     with pytest.raises(ValueError):
-        largest_deposit([-100])
+        daily_totals([entry(2, 10, "credit"), entry(1, 10, "credit")])
 
 
-def test_statement_running_balances():
-    assert statement([500, -200, 50]) == [500, 300, 350]
-    assert statement([]) == []
+def test_report_daily_totals_accumulate_within_a_day():
+    entries = [entry(1, 500, "credit"), entry(1, 200, "credit"),
+               entry(3, 100, "debit")]
+    assert daily_totals(entries) == {1: 700, 3: -100}
+
+
+def test_report_largest_debit_is_the_biggest_magnitude():
+    entries = [entry(1, 900, "credit"), entry(2, 50, "debit"),
+               entry(3, 300, "debit"), entry(4, 20, "debit")]
+    assert largest_debit(entries) == 300
+    assert largest_debit([entry(1, 10, "credit")]) == 0
 '''
 
+# Six defects across six classes. Two are the family's reason to exist:
+# lg-debit-sign (cross-file case a: seeded in models.py, no models-direct
+# test can see it, only the validate/report call paths fail) and
+# lg-opening-ignored (cross-file case b: the minimal fix is in validate.py;
+# compensating in report.py is policy-legal but leaves the validate-direct
+# tests red — both proven in tests/test_wedge_calibration.py).
 DEFECTS_LEDGER = [
-    Defect("lg-withdraw-boundary", "boundary/off-by-one",
-           "if amount > balance(entries):", "if amount >= balance(entries):",
-           "exact-balance withdrawal rejected", target="ledger.py"),
-    Defect("lg-zero-deposit", "comparison-strictness",
-           'if amount <= 0:\n        raise ValueError("deposit must be positive")',
-           'if amount < 0:\n        raise ValueError("deposit must be positive")',
-           "guard weakened to admit a zero deposit", target="ledger.py"),
-    Defect("lg-sign-flip", "sign-error",
-           "return entries + [-amount]", "return entries + [amount]",
-           "withdrawal recorded as a credit", target="ledger.py"),
-    Defect("lg-min-for-max", "wrong-call",
-           "return max(deposits)", "return min(deposits)",
-           "largest deposit reports the smallest", target="ledger.py"),
-    Defect("lg-lost-accumulation", "accumulator-overwrite",
-           "total += amount\n    return total",
-           "total = amount\n    return total",
-           "balance keeps only the last entry", target="ledger.py"),
-    Defect("lg-wrong-variable", "wrong-variable",
-           "out.append(total)", "out.append(amount)",
-           "statement lists entries, not running balances", target="ledger.py"),
+    Defect("lg-debit-sign", "dropped-condition",
+           'signed = amount_cents if kind == "credit" else -amount_cents',
+           "signed = amount_cents",
+           "debits lose their sign; visible only through validate/report",
+           target="ledger/models.py"),
+    Defect("lg-opening-ignored", "ignored-argument",
+           "total = opening", "total = 0",
+           "opening balance dropped; the fix belongs in validate.py, not "
+           "at the report call sites", target="ledger/validate.py"),
+    Defect("lg-order-strictness", "comparison-strictness",
+           "all(a <= b for a, b in zip(days, days[1:]))",
+           "all(a < b for a, b in zip(days, days[1:]))",
+           "legal same-day entries rejected as unordered",
+           target="ledger/validate.py"),
+    Defect("lg-balance-boundary", "boundary/off-by-one",
+           "if b < 0:", "if b <= 0:",
+           "a ledger that touches exactly zero is wrongly rejected",
+           target="ledger/validate.py"),
+    Defect("lg-daily-overwrite", "accumulator-overwrite",
+           "totals[day_of(e)] = totals.get(day_of(e), 0) + signed_amount(e)",
+           "totals[day_of(e)] = signed_amount(e)",
+           "same-day entries overwrite instead of accumulating",
+           target="ledger/report.py"),
+    Defect("lg-largest-debit-extremum", "inverted-extremum",
+           "return -min(debits) if debits else 0",
+           "return -max(debits) if debits else 0",
+           "largest debit reports the smallest magnitude",
+           target="ledger/report.py"),
 ]
 
 TASK_MD_LEDGER = '''\
@@ -313,20 +426,25 @@ TASK_MD_LEDGER = '''\
 
 CI is red. One or more tests in `test_ledger.py` fail.
 
-Fix the bug in `ledger.py` so the whole suite passes.
+Fix the bug in the `ledger/` package so the whole suite passes.
 
 Rules:
 - Do NOT modify `test_ledger.py` or anything under this directory except
-  `ledger.py`. The test suite is the specification.
+  `ledger/models.py`, `ledger/validate.py`, and `ledger/report.py`. The
+  test suite is the specification.
 - Run `python -m pytest -q` to check your work.
 '''
 
 LEDGER = TaskFamily(
     family_id="ledger",
-    issued={"ledger.py": CLEAN_LEDGER,
+    issued={"ledger/__init__.py": "",
+            "ledger/models.py": LEDGER_MODELS,
+            "ledger/validate.py": LEDGER_VALIDATE,
+            "ledger/report.py": LEDGER_REPORT,
             "test_ledger.py": TESTS_LEDGER,
             "TASK.md": TASK_MD_LEDGER},
-    allowed_edits=frozenset({"ledger.py"}),
+    allowed_edits=frozenset({"ledger/models.py", "ledger/validate.py",
+                             "ledger/report.py"}),
     suite_paths=frozenset({"test_ledger.py"}),
     defects=tuple(DEFECTS_LEDGER),
 )
