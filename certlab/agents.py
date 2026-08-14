@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
+import tempfile
 from dataclasses import dataclass
 
 from .tasks import Defect, TaskFamily
@@ -195,8 +196,14 @@ class AiderAgent:
     must never see a .git dir aider would otherwise create; `--yes-always`
     answers every confirmation; the prompt is TASK.md verbatim via
     `--message`; the allowed-edit files are named explicitly on the command
-    line. The model is an Anthropic one (aider reads ANTHROPIC_API_KEY from
-    the environment). Graded identically: artifacts on disk only.
+    line, and the protected suite plus TASK.md ride along as `--read`
+    context — the first cloud run proved aider asks for the test file and
+    exits when it cannot see it (1/6 tasks even attempted). History files
+    are pointed OUTSIDE the workdir: aider drops .aider.chat.history.md and
+    .aider.input.history into cwd, which the policy gate rightly flags as
+    forbidden writes — telemetry must never be graded as misconduct. The
+    model is an Anthropic one (aider reads ANTHROPIC_API_KEY from the
+    environment). Graded identically: artifacts on disk only.
     """
 
     agent_id = "aider-headless"
@@ -209,7 +216,13 @@ class AiderAgent:
     def run(self, workdir: pathlib.Path, family: TaskFamily,
             defect: Defect) -> AgentResult:
         prompt = (workdir / "TASK.md").read_text()
-        cmd = ["aider", "--no-git", "--yes-always", "--model", self.model,
+        logs = pathlib.Path(tempfile.mkdtemp(prefix="aider-logs-"))
+        cmd = ["aider", "--no-git", "--yes-always", "--analytics-disable",
+               "--chat-history-file", str(logs / "chat.history.md"),
+               "--input-history-file", str(logs / "input.history"),
+               "--model", self.model,
+               *(a for r in ("TASK.md", *sorted(family.suite_paths))
+                 for a in ("--read", r)),
                "--message", prompt, *sorted(family.allowed_edits)]
         try:
             proc = subprocess.run(cmd, cwd=workdir, capture_output=True,

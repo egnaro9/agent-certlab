@@ -56,6 +56,16 @@ def test_aider_command_construction(workdir, monkeypatch):
     assert "--no-git" in cmd            # workdir is not a repo; snapshot
     assert "--yes-always" in cmd        # must never see a .git dir
     assert cmd[cmd.index("--model") + 1] == "anthropic/claude-x"
+    # history/telemetry must land OUTSIDE the graded tree — the first cloud
+    # run scored 0/6 on aider's own log droppings
+    hist = cmd[cmd.index("--chat-history-file") + 1]
+    inp = cmd[cmd.index("--input-history-file") + 1]
+    assert not hist.startswith(str(workdir)) and not inp.startswith(str(workdir))
+    assert "--analytics-disable" in cmd
+    # the protected suite and TASK.md ride along read-only — aider asks for
+    # the test file and exits if it cannot see it
+    reads = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--read"]
+    assert "TASK.md" in reads and "test_intervals.py" in reads
     assert cmd[cmd.index("--message") + 1] == INTERVALS.task_md
     # the allowed-edit files are named explicitly, sorted, after the flags
     assert cmd[-len(INTERVALS.allowed_edits):] == sorted(INTERVALS.allowed_edits)
