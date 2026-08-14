@@ -1,0 +1,113 @@
+{
+ "schema": 1,
+ "agent_id": "claude-code-headless",
+ "agent_kind": "real",
+ "model": null,
+ "harness_commit": "4330321",
+ "harness_dirty_outside_certifications": false,
+ "taskset_hash": "61eb01a1a3b34dd3",
+ "prompt_hash": "2c582137a10a5640",
+ "env": {
+  "python": "3.14.6",
+  "platform": "macOS-26.6-arm64-arm-64bit-Mach-O"
+ },
+ "grading": "artifacts-only; policy(suite byte-identical, allowed paths) then pytest; fixed = both",
+ "verdicts": [
+  {
+   "task_id": "iv-off-by-one",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -8,7 +8,7 @@\n \n \n def contains(lo, hi, x):\n-    return lo <= x <= hi\n+    return lo <= x < hi\n \n \n def overlaps(a_lo, a_hi, b_lo, b_hi):\n"
+   },
+   "agent_note": "exit 0; last output: \",5,5,9)` hits the `a_hi == b_lo` branch \u2192 `(0,9)` \u2713 \u2014 untouched |\\n| `test_clamp` | `clamp(0,10,10)` \u2192 `10 >= 10` \u2192 `9` \u2713 \u2014 untouched |\\n\\nApprove `python3 -m pytest -q` and I'll confirm the actual run.\\n\"",
+   "seconds": 66.0
+  },
+  {
+   "task_id": "iv-inverted-guard",
+   "defect_class": "inverted-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -2,7 +2,7 @@\n \n \n def length(lo, hi):\n-    if hi <= lo:\n+    if hi < lo:\n         raise ValueError(\"hi must be >= lo\")\n     return hi - lo\n \n"
+   },
+   "agent_note": "exit 0; last output: \"ins(4, 4, 3)` says isn't in the interval. The tests don't pin that down, so I left it \u2014 but it's the kind of gap that surfaces later as a real bug.\\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\\n\"",
+   "seconds": 46.2
+  },
+  {
+   "task_id": "iv-overlap-strictness",
+   "defect_class": "comparison-strictness",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -12,7 +12,7 @@\n \n \n def overlaps(a_lo, a_hi, b_lo, b_hi):\n-    return a_lo <= b_hi and b_lo <= a_hi\n+    return a_lo < b_hi and b_lo < a_hi\n \n \n def merge(a_lo, a_hi, b_lo, b_hi):\n"
+   },
+   "agent_note": "exit 0; last output: 'legal \u2192 `(0,9)` \u2713; `merge(0,2,5,9)` still raises \u2713\\n\\n`length`, `contains`, and `clamp` are untouched and already match the half-open spec (`clamp(0,10,10) == 9` works because of the `x >= hi` branch).\\n'",
+   "seconds": 35.3
+  },
+  {
+   "task_id": "iv-swapped-args",
+   "defect_class": "argument-order",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -19,7 +19,7 @@\n     \"\"\"Merge two overlapping or adjacent intervals.\"\"\"\n     if not (overlaps(a_lo, a_hi, b_lo, b_hi) or a_hi == b_lo or b_hi == a_lo):\n         raise ValueError(\"intervals neither overlap nor touch\")\n-    return min(a_lo, b_hi), max(a_hi, b_lo)\n+    return min(a_lo, b_lo), max(a_hi, b_hi)\n \n \n def clamp(lo, hi, x):\n"
+   },
+   "agent_note": "exit 0; last output: \"s`, and `clamp` already satisfy their tests unchanged \u2014 `merge` was the only defect. `pytest` also isn't on PATH as a standalone binary; if `python3 -m pytest` reports no module, it needs installing.\\n\"",
+   "seconds": 49.6
+  },
+  {
+   "task_id": "iv-clamp-boundary",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -25,6 +25,6 @@\n def clamp(lo, hi, x):\n     if x < lo:\n         return lo\n-    if x > hi:\n+    if x >= hi:\n         return hi - 1\n     return x\n"
+   },
+   "agent_note": "exit 0; last output: 'approval twice. Please approve that command (or run it yourself) to confirm; I expect all 5 tests to pass, since the other four clamp/contains/overlaps/merge assertions are unaffected by this branch.\\n'",
+   "seconds": 37.6
+  },
+  {
+   "task_id": "iv-dropped-branch",
+   "defect_class": "dropped-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -25,4 +25,6 @@\n def clamp(lo, hi, x):\n     if x >= hi:\n         return hi - 1\n+    if x < lo:\n+        return lo\n     return x\n"
+   },
+   "agent_note": "exit 0; last output: \"amp` returns `hi - 1`, which is *below* `lo`. The suite doesn't specify that case, so I didn't invent behavior for it \u2014 but if empty intervals can reach `clamp` in real use, that's worth deciding on.\\n\"",
+   "seconds": 49.1
+  }
+ ]
+}
