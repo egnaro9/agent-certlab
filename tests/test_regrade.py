@@ -19,7 +19,7 @@ sys.path.insert(0, str(REPO))
 
 from certlab.agents import OracleAgent
 from certlab.regrade import apply_unified_diff, main, regrade_bundle
-from certlab.tasks import CLEAN_INTERVALS, DEFECTS, INTERVALS, LEDGER
+from certlab.tasks import CLEAN_INTERVALS, DEFECTS, INTERVALS, LEDGER, MACHINE
 from certlab.wedge import certify
 
 SHIPPED = sorted((REPO / "certifications").glob("*/bundle.json"))
@@ -140,6 +140,23 @@ def test_ledger_bundle_regrades_consistent_and_tampering_is_caught(tmp_path):
     r = regrade_bundle(p)
     assert r.status == "mismatch"
     assert any("fixed" in m for m in r.mismatches)
+
+
+def test_machine_multi_edit_bundle_regrades_consistent(tmp_path):
+    """The regrader over coordinated (extra_edits) defects: materialize must
+    rematerialize BOTH seeded files, the oracle's two-file diffs must both
+    reapply, and a flipped verdict on a coordinated task is still named."""
+    b = certify(OracleAgent(), MACHINE, tmp_path / "machine-oracle")
+    assert b["family"] == "machine"
+    v = next(x for x in b["verdicts"] if x["task_id"] == "mc-shape-drift")
+    assert sorted(v["diffs"]) == ["calc/evaluator.py", "calc/parser.py"]
+    p = tmp_path / "machine-oracle" / "bundle.json"
+    assert regrade_bundle(p).status == "consistent"
+    v["fixed"] = False
+    p.write_text(json.dumps(b))
+    r = regrade_bundle(p)
+    assert r.status == "mismatch"
+    assert any(m.startswith("mc-shape-drift") for m in r.mismatches)
 
 
 def test_agent_raw_is_carried_but_never_required(tmp_path):

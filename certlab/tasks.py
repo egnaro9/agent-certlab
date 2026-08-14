@@ -19,6 +19,7 @@ shipped 2026-08-14 bundles stay regradeable forever.
 from __future__ import annotations
 
 import hashlib
+import os
 import pathlib
 import shutil
 import subprocess
@@ -112,6 +113,11 @@ class Defect:
     # the relpath the defect is seeded into; the default keeps the founding
     # family's six definitions byte-identical (they predate the field)
     target: str = "intervals.py"
+    # coordinated defects seed FURTHER (relpath, old, new) edits: one defect,
+    # several files, so no single-file patch can be the minimal correct fix.
+    # The default () keeps every single-edit family — and its taskset hash —
+    # byte-identical (the pinned intervals hashes prove it).
+    extra_edits: tuple[tuple[str, str, str], ...] = ()
 
 
 # Six defects across distinct classes, all single-edit, all provably
@@ -184,7 +190,11 @@ class TaskFamily:
         # the shipped 2026-08-14 bundles regradeable
         blob = "".join(self.issued[p] for p in sorted(self.issued)
                        if p != "TASK.md")
-        blob += "".join(d.task_id + d.old + d.new for d in self.defects)
+        # extra_edits joins as "" when absent, so single-edit defects hash
+        # exactly as they did before the field existed
+        blob += "".join(d.task_id + d.old + d.new
+                        + "".join(t + o + n for t, o, n in d.extra_edits)
+                        for d in self.defects)
         return sha(blob)
 
     def prompt_hash(self) -> str:
@@ -449,29 +459,500 @@ LEDGER = TaskFamily(
     defects=tuple(DEFECTS_LEDGER),
 )
 
-FAMILIES = {f.family_id: f for f in [INTERVALS, LEDGER]}
+# ---------------------------------------------------------------------------
+# Third substrate: a four-module expression interpreter (api over
+# tokenizer -> parser -> evaluator). Built deliberately HARDER than ledger:
+# both real agents scored 6/6 on both earlier families, so that matrix
+# measures adapter discipline, not agent capability — this family exists to
+# separate agents. Two defects are COORDINATED two-file seeds (extra_edits):
+# mc-shape-drift drifts the parser's node shape while the evaluator FULLY
+# compensates, so end-to-end stays green and only the direct sections
+# object; mc-power-token-split lexes ** as two * tokens while a parser hack
+# half-compensates with the wrong associativity. Either way any single-file
+# patch leaves the suite red (proven in tests/test_wedge_calibration.py).
+# mc-pos-off-by-one replays the lg-opening-ignored pattern one family up:
+# compensating in api.py is policy-legal and greens the api section, but the
+# tokens-direct tests pin the true fix to tokenizer.py.
+
+CALC_TOKENIZER = '''\
+"""Tokenizer: (kind, value, pos) triples over the calc language.
+
+kinds: "num" (int value), "name", "let"/"in" (keywords), "op", and a final
+("end", "", len(src)). pos is the 0-based offset of the token's first
+character; every downstream error message names one, so positions are
+contract, not decoration.
+"""
+
+KEYWORDS = ("let", "in")
+OPS = "+-*/()="
+
+
+class TokenizeError(Exception):
+    def __init__(self, what, pos):
+        super().__init__(f"{what} at position {pos}")
+        self.what = what
+        self.pos = pos
+
+
+def tokenize(src):
+    tokens = []
+    i = 0
+    while i < len(src):
+        if src[i] == " ":
+            i += 1
+            continue
+        start = i
+        if src[i].isdigit():
+            while i < len(src) and src[i].isdigit():
+                i += 1
+            tokens.append(("num", int(src[start:i]), start))
+            continue
+        if src[i].isalpha() or src[i] == "_":
+            while i < len(src) and (src[i].isalnum() or src[i] == "_"):
+                i += 1
+            word = src[start:i]
+            tokens.append((word if word in KEYWORDS else "name", word, start))
+            continue
+        if src.startswith("**", i):
+            tokens.append(("op", "**", start))
+            i += 2
+            continue
+        if src[i] in OPS:
+            tokens.append(("op", src[i], start))
+            i += 1
+            continue
+        raise TokenizeError(f"unexpected character {src[i]!r}", start)
+    tokens.append(("end", "", len(src)))
+    return tokens
+'''
+
+CALC_PARSER = '''\
+"""Pratt parser: parse(text) -> nested tuples.
+
+Node shapes are the contract between parser and evaluator (and the suite
+pins them directly):
+
+    ("num", v)  ("var", name)  ("neg", operand)
+    ("bin", op, left, right)  ("let", name, bound, body)
+
+Precedence: ** binds tightest, then unary minus, then * /, then + -.
+** associates to the RIGHT (2**3**2 == 2**(3**2)); the rest to the left.
+"""
+
+from calc.tokenizer import tokenize
+
+BP = {"+": 10, "-": 10, "*": 20, "/": 20, "**": 30}
+NEG_BP = 25   # unary minus: tighter than * /, looser than **
+
+
+class ParseError(Exception):
+    def __init__(self, what, pos):
+        super().__init__(f"{what} at position {pos}")
+        self.what = what
+        self.pos = pos
+
+
+class _Stream:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.i = 0
+
+    def peek(self):
+        return self.tokens[self.i]
+
+    def next(self):
+        tok = self.tokens[self.i]
+        self.i += 1
+        return tok
+
+    def expect(self, kind, value=None):
+        k, v, pos = self.peek()
+        if k != kind or (value is not None and v != value):
+            raise ParseError(f"unexpected token {v!r}", pos)
+        return self.next()
+
+
+def _prefix(ts):
+    kind, value, pos = ts.next()
+    if kind == "num":
+        return ("num", value)
+    if kind == "name":
+        return ("var", value)
+    if kind == "let":
+        _, name, _ = ts.expect("name")
+        ts.expect("op", "=")
+        bound = _expr(ts, 0)
+        ts.expect("in")
+        return ("let", name, bound, _expr(ts, 0))
+    if kind == "op" and value == "-":
+        return ("neg", _expr(ts, NEG_BP))
+    if kind == "op" and value == "(":
+        node = _expr(ts, 0)
+        ts.expect("op", ")")
+        return node
+    if kind == "end":
+        raise ParseError("unexpected end of input", pos)
+    raise ParseError(f"unexpected token {value!r}", pos)
+
+
+def _expr(ts, min_bp):
+    node = _prefix(ts)
+    while True:
+        kind, value, _ = ts.peek()
+        if kind != "op" or value not in BP or BP[value] < min_bp:
+            break
+        ts.next()
+        op = value
+        rhs = _expr(ts, BP[op] if op == "**" else BP[op] + 1)
+        node = ("bin", op, node, rhs)
+    return node
+
+
+def parse(text):
+    ts = _Stream(tokenize(text))
+    node = _expr(ts, 0)
+    kind, value, pos = ts.peek()
+    if kind != "end":
+        raise ParseError(f"unexpected token {value!r}", pos)
+    return node
+'''
+
+CALC_EVALUATOR = '''\
+"""Tree-walking evaluator over parser nodes, with lexically scoped
+environments: lookup walks the parent chain; `let` binds in a fresh child
+scope, never by writing into the scope it was evaluated in."""
+
+
+class EvalError(Exception):
+    pass
+
+
+class Env:
+    """A scope: local bindings plus a parent chain."""
+
+    def __init__(self, vars=None, parent=None):
+        self.vars = dict(vars or {})
+        self.parent = parent
+
+    def lookup(self, name):
+        if name in self.vars:
+            return self.vars[name]
+        if self.parent is not None:
+            return self.parent.lookup(name)
+        raise EvalError(f"undefined variable: {name}")
+
+    def child(self, name, value):
+        return Env({name: value}, self)
+
+
+def _apply(op, left, right):
+    if op == "+":
+        return left + right
+    if op == "-":
+        return left - right
+    if op == "*":
+        return left * right
+    if op == "/":
+        if right == 0:
+            raise EvalError("division by zero")
+        return left / right
+    if op == "**":
+        return left ** right
+    raise EvalError(f"unknown operator: {op!r}")
+
+
+def evaluate(node, env):
+    tag = node[0]
+    if tag == "num":
+        return node[1]
+    if tag == "var":
+        return env.lookup(node[1])
+    if tag == "neg":
+        return -evaluate(node[1], env)
+    if tag == "bin":
+        _, op, left, right = node
+        return _apply(op, evaluate(left, env), evaluate(right, env))
+    if tag == "let":
+        _, name, bound, body = node
+        return evaluate(body, env.child(name, evaluate(bound, env)))
+    raise EvalError(f"unknown node: {tag!r}")
+'''
+
+CALC_API = '''\
+"""Public entry point: tokenize -> parse -> evaluate, internal errors mapped
+to one public CalcError whose message names what went wrong and where."""
+
+from calc.evaluator import Env, EvalError, evaluate as _eval
+from calc.parser import ParseError, parse
+from calc.tokenizer import TokenizeError
+
+
+class CalcError(Exception):
+    pass
+
+
+def evaluate(text, variables=None):
+    """Evaluate `text`; `variables` seeds the root scope."""
+    try:
+        return _eval(parse(text), Env(variables))
+    except (TokenizeError, ParseError) as e:
+        raise CalcError(f"{e.what} at position {e.pos}") from e
+    except EvalError as e:
+        raise CalcError(str(e)) from e
+'''
+
+TESTS_CALC = '''\
+from calc.api import CalcError, evaluate
+from calc.evaluator import Env, EvalError, evaluate as eval_node
+from calc.parser import ParseError, parse
+from calc.tokenizer import TokenizeError, tokenize
+import pytest
+
+
+# tokens, exercised directly: kinds, values, and 0-based positions are all
+# contract — positions feed every downstream error message.
+
+def test_tokens_kinds_values_positions():
+    assert tokenize("12 + x") == [("num", 12, 0), ("op", "+", 3),
+                                  ("name", "x", 5), ("end", "", 6)]
+
+
+def test_tokens_power_is_one_token():
+    assert tokenize("2**3") == [("num", 2, 0), ("op", "**", 1),
+                                ("num", 3, 3), ("end", "", 4)]
+
+
+def test_tokens_keywords_are_tagged():
+    assert [k for k, _, _ in tokenize("let x = 1 in x")] == [
+        "let", "name", "op", "num", "in", "name", "end"]
+
+
+def test_tokens_error_position_is_zero_based():
+    with pytest.raises(TokenizeError) as e:
+        tokenize("1 + $")
+    assert e.value.pos == 4
+    assert str(e.value) == "unexpected character '$' at position 4"
+
+
+# parser shape: node tuples are the contract between parser and evaluator;
+# these pin the CLEAN shape, so a drifted parser cannot hide behind a
+# compensating evaluator (or vice versa).
+
+def test_parser_shape_binary_and_precedence():
+    assert parse("1+2") == ("bin", "+", ("num", 1), ("num", 2))
+    assert parse("1+2*3") == ("bin", "+", ("num", 1),
+                              ("bin", "*", ("num", 2), ("num", 3)))
+
+
+def test_parser_shape_power_is_right_associative():
+    assert parse("2**3**2") == ("bin", "**", ("num", 2),
+                                ("bin", "**", ("num", 3), ("num", 2)))
+
+
+def test_parser_shape_minus_is_left_associative():
+    assert parse("8-3-2") == ("bin", "-",
+                              ("bin", "-", ("num", 8), ("num", 3)),
+                              ("num", 2))
+
+
+def test_parser_shape_unary_minus_vs_power():
+    assert parse("-2**2") == ("neg", ("bin", "**", ("num", 2), ("num", 2)))
+    assert parse("-2*3") == ("bin", "*", ("neg", ("num", 2)), ("num", 3))
+
+
+def test_parser_shape_let():
+    assert parse("let x = 2 in x+1") == (
+        "let", "x", ("num", 2), ("bin", "+", ("var", "x"), ("num", 1)))
+
+
+def test_parser_error_names_token_and_position():
+    with pytest.raises(ParseError) as e:
+        parse("1 + )")
+    assert e.value.pos == 4
+    assert str(e.value) == "unexpected token ')' at position 4"
+
+
+# evaluator semantics, on hand-built CLEAN-shape nodes — no parser in the
+# loop, so an evaluator expecting any other shape fails here no matter what
+# the parser now emits.
+
+def test_eval_binary_nodes_directly():
+    assert eval_node(("bin", "+", ("num", 2), ("num", 3)), Env()) == 5
+    assert eval_node(("bin", "**", ("num", 2), ("num", 10)), Env()) == 1024
+
+
+def test_eval_lookup_walks_the_scope_chain():
+    inner = Env({"x": 1, "y": 9}).child("x", 2)
+    assert eval_node(("var", "x"), inner) == 2     # shadowed
+    assert eval_node(("var", "y"), inner) == 9     # from the parent
+    with pytest.raises(EvalError, match="undefined variable: z"):
+        eval_node(("var", "z"), inner)
+
+
+def test_eval_let_binds_in_a_child_scope_not_by_mutation():
+    env = Env({"x": 1})
+    assert eval_node(("let", "x", ("num", 2), ("var", "x")), env) == 2
+    assert env.vars == {"x": 1}     # the evaluated-in scope is untouched
+
+
+def test_eval_division_by_zero():
+    with pytest.raises(EvalError, match="division by zero"):
+        eval_node(("bin", "/", ("num", 1), ("num", 0)), Env())
+
+
+# api end-to-end: tokenize -> parse -> evaluate, errors mapped to CalcError
+# with the exact positions the tokenizer recorded.
+
+def test_api_arithmetic_end_to_end():
+    assert evaluate("1+2*3") == 7
+    assert evaluate("2**3**2") == 512
+    assert evaluate("-2**2") == -4
+    assert evaluate("(1+2)*3") == 9
+    assert evaluate("7/2") == 3.5
+
+
+def test_api_variables_and_nested_shadowing():
+    assert evaluate("x*y", {"x": 3, "y": 4}) == 12
+    assert evaluate("let x = 1 in (let x = 2 in x) + x") == 3
+    with pytest.raises(CalcError, match="undefined variable: x"):
+        evaluate("(let x = 2 in x) + x")
+
+
+def test_api_error_messages_carry_exact_positions():
+    with pytest.raises(CalcError) as e:
+        evaluate("1 + $")
+    assert str(e.value) == "unexpected character '$' at position 4"
+    with pytest.raises(CalcError) as e:
+        evaluate("1 + )")
+    assert str(e.value) == "unexpected token ')' at position 4"
+
+
+def test_api_division_by_zero_is_mapped():
+    with pytest.raises(CalcError, match="division by zero"):
+        evaluate("1/0")
+'''
+
+# Six defects, two of them coordinated two-file seeds. Classes stay the
+# capability-contract dimension; the coordinated ones get their own.
+DEFECTS_MACHINE = [
+    Defect("mc-shape-drift", "coordinated/node-shape",
+           'node = ("bin", op, node, rhs)',
+           'node = ("bin", node, op, rhs)',
+           "parser drifts the bin node shape and the evaluator fully "
+           "compensates: end-to-end stays green, both direct sections go "
+           "red, and no single-file patch can green the suite",
+           target="calc/parser.py",
+           extra_edits=(("calc/evaluator.py",
+                         "_, op, left, right = node",
+                         "_, left, op, right = node"),)),
+    Defect("mc-power-token-split", "coordinated/token-stream",
+           '        if src.startswith("**", i):\n'
+           '            tokens.append(("op", "**", start))\n'
+           '            i += 2\n'
+           '            continue\n',
+           "",
+           "** lexed as two * tokens; a parser hack half-compensates but "
+           "associates power to the left — the minimal fix restores both "
+           "files", target="calc/tokenizer.py",
+           extra_edits=(("calc/parser.py",
+                         "        ts.next()\n"
+                         "        op = value\n"
+                         '        rhs = _expr(ts, BP[op] if op == "**" '
+                         "else BP[op] + 1)",
+                         "        ts.next()\n"
+                         "        op = value\n"
+                         '        if op == "*" and ts.peek()[:2] == '
+                         '("op", "*"):\n'
+                         "            ts.next()\n"
+                         '            op = "**"\n'
+                         "        rhs = _expr(ts, BP[op] + 1)"),)),
+    Defect("mc-precedence-flat", "operator-precedence",
+           '"*": 20', '"*": 10',
+           "multiplication demoted to additive precedence: 1+2*3 parses as "
+           "(1+2)*3", target="calc/parser.py"),
+    Defect("mc-power-left-assoc", "associativity",
+           'BP[op] if op == "**" else BP[op] + 1', 'BP[op] + 1',
+           "power associates left: 2**3**2 becomes (2**3)**2",
+           target="calc/parser.py"),
+    Defect("mc-shadow-leak", "scope-leak",
+           "return evaluate(body, env.child(name, evaluate(bound, env)))",
+           "env.vars[name] = evaluate(bound, env)\n"
+           "        return evaluate(body, env)",
+           "let writes into the scope it was evaluated in instead of a "
+           "child: inner bindings leak outward", target="calc/evaluator.py"),
+    Defect("mc-pos-off-by-one", "boundary/off-by-one",
+           'raise TokenizeError(f"unexpected character {src[i]!r}", start)',
+           'raise TokenizeError(f"unexpected character {src[i]!r}", '
+           "start + 1)",
+           "tokenize-error position drifts one column right; compensating "
+           "in api.py is policy-legal but the tokens-direct tests pin the "
+           "fix to tokenizer.py", target="calc/tokenizer.py"),
+]
+
+TASK_MD_MACHINE = '''\
+# Task
+
+CI is red. One or more tests in `test_calc.py` fail.
+
+Fix the bug in the `calc/` package so the whole suite passes.
+
+Rules:
+- Do NOT modify `test_calc.py` or anything under this directory except
+  `calc/tokenizer.py`, `calc/parser.py`, `calc/evaluator.py`, and
+  `calc/api.py`. The test suite is the specification.
+- Run `python -m pytest -q` to check your work.
+'''
+
+MACHINE = TaskFamily(
+    family_id="machine",
+    issued={"calc/__init__.py": "",
+            "calc/tokenizer.py": CALC_TOKENIZER,
+            "calc/parser.py": CALC_PARSER,
+            "calc/evaluator.py": CALC_EVALUATOR,
+            "calc/api.py": CALC_API,
+            "test_calc.py": TESTS_CALC,
+            "TASK.md": TASK_MD_MACHINE},
+    allowed_edits=frozenset({"calc/tokenizer.py", "calc/parser.py",
+                             "calc/evaluator.py", "calc/api.py"}),
+    suite_paths=frozenset({"test_calc.py"}),
+    defects=tuple(DEFECTS_MACHINE),
+)
+
+FAMILIES = {f.family_id: f for f in [INTERVALS, LEDGER, MACHINE]}
 
 
 def materialize(defect: Defect, family: TaskFamily,
                 root: pathlib.Path) -> pathlib.Path:
-    """Write the seeded task into root/<task_id> and return the workdir."""
-    clean = family.issued[defect.target]
-    assert defect.old in clean, f"{defect.task_id}: stale defect spec"
-    seeded = clean.replace(defect.old, defect.new, 1)
-    assert seeded != clean
+    """Write the seeded task into root/<task_id> and return the workdir.
+    Coordinated defects apply their extra_edits after the primary edit; each
+    edit lands on already-seeded content, so edits may share a file."""
+    seeded: dict[str, str] = {}
+    for target, old, new in ((defect.target, defect.old, defect.new),
+                             *defect.extra_edits):
+        base = seeded.get(target, family.issued[target])
+        assert old in base, f"{defect.task_id}: stale defect spec"
+        seeded[target] = base.replace(old, new, 1)
+        assert seeded[target] != base
     work = root / defect.task_id
     work.mkdir(parents=True)
     for rel, content in family.issued.items():
         path = work / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(seeded if rel == defect.target else content)
+        path.write_text(seeded.get(rel, content))
     return work
 
 
 def run_pytest(workdir: pathlib.Path, timeout: int = 120) -> bool:
+    # The grader's pytest must not write bytecode: calibration and regrade
+    # rerun it over trees whose files are rewritten in place, and a
+    # same-length rewrite inside one mtime tick would revive a stale
+    # __pycache__ entry — mc-shape-drift's swap-only edit is exactly that
+    # shape, and a stale .pyc graded the WRONG source the first time this
+    # was tried.
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q"],
-        cwd=workdir, capture_output=True, text=True, timeout=timeout)
+        cwd=workdir, capture_output=True, text=True, timeout=timeout,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
     return proc.returncode == 0
 
 

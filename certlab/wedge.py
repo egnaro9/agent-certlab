@@ -208,9 +208,10 @@ def contract(bundle: dict) -> str:
         "",
         "**Conditions and limits.** Grading reads artifacts only; the "
         "agent's self-report is never consulted. This contract covers "
-        "exactly the task family named by its hash — single-edit defects "
-        "seeded into that family's sources, with its untouched test suite "
-        "as the complete specification — and says nothing beyond it. "
+        "exactly the task family named by its hash — defects seeded into "
+        "that family's sources (a coordinated defect spans several files), "
+        "with its untouched test suite as the complete specification — and "
+        "says nothing beyond it. "
         "Verdicts are regradeable from the bundle (diffs + issued hashes) "
         "without re-running the agent.",
         "",

@@ -65,12 +65,25 @@ from certlab import INTERVALS, ClaudeCodeAgent, certify
 certify(ClaudeCodeAgent(), INTERVALS, pathlib.Path('certifications/my-run'))"
 ```
 
-Two task families ship (`certlab.FAMILIES`): `intervals`, a single-module
-substrate, and `ledger`, a three-module package (`models` → `validate` →
-`report`) whose defects include genuinely cross-file cases — one seeded in
-`models.py` that only the `validate`/`report` call paths can fail on, and one
-whose policy-legal-but-wrong fix in `report.py` the validate-direct tests
-reject, pinning the fix to the file the defect lives in.
+Three task families ship (`certlab.FAMILIES`). `intervals` is a
+single-module substrate. `ledger` is a three-module package (`models` →
+`validate` → `report`) whose defects include genuinely cross-file cases —
+one seeded in `models.py` that only the `validate`/`report` call paths can
+fail on, and one whose policy-legal-but-wrong fix in `report.py` the
+validate-direct tests reject, pinning the fix to the file the defect lives
+in. `machine` is a four-module expression interpreter (`tokenizer` →
+`parser` → `evaluator`, `api` over all three) built deliberately harder:
+both real agents scored 6/6 on the first two families, so that matrix
+measures adapter discipline — this family exists to separate agents. Two of
+its six defects are **coordinated two-file seeds** (a parser node-shape
+drift the evaluator fully compensates, so end-to-end stays green while the
+direct sections object; a `**` token split a parser hack half-compensates
+with the wrong associativity): reverting either file alone leaves the suite
+red — proven in the calibration tests — so no single-file patch is the
+minimal correct fix. A third replays the pinned-fix-location trap one
+family up: compensating in `api.py`'s error mapping is policy-legal and
+greens the whole api section, but the tokens-direct tests assert the raised
+position itself.
 
 `certifications/` holds published runs: `bundle.json` (the evidence) and
 `CONTRACT.md` (the human-readable capability contract, failure modes named).

@@ -10,7 +10,7 @@ on:
       family:
         description: task family to certify against
         type: choice
-        options: [intervals, ledger]
+        options: [intervals, ledger, machine]
         default: intervals
 jobs:
   certify:
