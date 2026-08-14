@@ -12,6 +12,25 @@ suites) → [reference-fleet](https://github.com/egnaro9/reference-fleet)
 (certified defect models + the [audit
 board](https://egnaro9.github.io/reference-fleet/)) → this lab.
 
+**Note what is under test here: an agent, not a model.** The lab certifies
+the whole software system that edits code (today: Claude Code, driven
+headless); there is no model artifact in this repo by design. The program's
+trained defect **model** — a LoRA adapter with a measured, certified defect
+rate — lives in
+[reference-fleet/native](https://github.com/egnaro9/reference-fleet/tree/main/native).
+
+**Shipped certifications** (real runs, committed with evidence):
+[claude-code-2026-08-14](certifications/claude-code-2026-08-14/CONTRACT.md)
+— 6/6 defect classes fixed under policy, run locally — and
+[claude-code-cloud-2026-08-14](certifications/claude-code-cloud-2026-08-14/CONTRACT.md)
+— 6/6 **entirely inside GitHub Actions** via the dispatchable
+[`real-certification` workflow](.github/workflows/certify.yml): calibration
+gate first, then six headless runs on an ephemeral runner, bundle uploaded
+as an artifact. Every committed certification is independently **regraded in
+CI** (`python -m certlab.regrade`): issued files are rematerialized, the
+bundle's diffs reapplied, and every verdict re-earned from artifacts —
+recorded verdicts are never trusted, including ours.
+
 ## The three rules that make a certificate mean something
 
 1. **Prove the instrument before the finding.** Before any agent sees a
