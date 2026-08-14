@@ -15,7 +15,10 @@ own account. Three layers, in order:
 The evidence bundle is regradeable: it carries the issued file hashes, the
 full post-run diff of every changed file, and the environment snapshot, so
 the verdicts can be recomputed later without re-running any agent. (Replay
-of the AGENT is not claimed — replay of the GRADING is.)
+of the AGENT is not claimed — replay of the GRADING is.) Each verdict also
+preserves the agent's full raw transcript (`agent_raw`, tail-capped) —
+forensic evidence that stays in the bundle only: grading, regrade, and
+compare never consult it, and bundles without it regrade identically.
 """
 
 from __future__ import annotations
@@ -123,12 +126,14 @@ def certify(agent, family: TaskFamily, out_dir: pathlib.Path) -> dict:
     prove_preconditions(family)
 
     verdicts: list[TaskVerdict] = []
+    raws: list[str] = []
     with tempfile.TemporaryDirectory() as td:
         for defect in family.defects:
             work = materialize(defect, family, pathlib.Path(td))
             before = _snapshot(work)
             t0 = time.monotonic()
             result = agent.run(work, family, defect)
+            raws.append(getattr(result, "raw", ""))
             verdicts.append(_grade(family, before, work, defect, result.note,
                                    time.monotonic() - t0,
                                    invoked=result.invoked))
@@ -156,7 +161,11 @@ def certify(agent, family: TaskFamily, out_dir: pathlib.Path) -> dict:
                 "platform": platform.platform()},
         "grading": "artifacts-only; policy(suite byte-identical, allowed "
                    "paths) then pytest; fixed = both",
-        "verdicts": [asdict(v) for v in verdicts],
+        # agent_raw: the full (tail-capped) agent transcript per task —
+        # bundle-only forensics; absent in older bundles, and regrade
+        # neither reads nor requires it
+        "verdicts": [dict(asdict(v), agent_raw=r)
+                     for v, r in zip(verdicts, raws)],
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)

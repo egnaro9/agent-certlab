@@ -50,10 +50,34 @@ def _shadow_conftest(family: TaskFamily) -> str:
             "                          + ', '.join(sorted(_pending)))\n")
 
 
+_RAW_CAP = 200_000   # per-task transcript cap; the tail survives
+
+
+def _raw_transcript(stdout, stderr, cap: int = _RAW_CAP) -> str:
+    """The agent's complete stdout+stderr, tail-capped so one chatty run
+    cannot balloon an evidence bundle past usefulness. The tail is kept
+    because that is where a run explains how it ended."""
+    def text(x):
+        return x.decode(errors="replace") if isinstance(x, bytes) else (x or "")
+    raw = text(stdout)
+    if text(stderr):
+        if raw and not raw.endswith("\n"):
+            raw += "\n"
+        raw += "--- stderr ---\n" + text(stderr)
+    if len(raw) > cap:
+        raw = (f"[transcript truncated: first {len(raw) - cap} chars "
+               "dropped]\n") + raw[-cap:]
+    return raw
+
+
 @dataclass
 class AgentResult:
     invoked: bool
     note: str
+    # full stdout+stderr of the agent process (tail-capped); "" for agents
+    # that have no process. Preserved per-verdict in the bundle (agent_raw),
+    # never consulted by grading, regrade, or compare.
+    raw: str = ""
 
 
 class NullAgent:
@@ -157,9 +181,11 @@ class ClaudeCodeAgent:
             return AgentResult(
                 invoked=proc.returncode == 0,
                 note=f"exit {proc.returncode}; last output: "
-                     f"{(proc.stdout or proc.stderr)[-200:]!r}")
-        except subprocess.TimeoutExpired:
-            return AgentResult(invoked=False, note=f"timeout {self.timeout}s")
+                     f"{(proc.stdout or proc.stderr)[-200:]!r}",
+                raw=_raw_transcript(proc.stdout, proc.stderr))
+        except subprocess.TimeoutExpired as e:
+            return AgentResult(invoked=False, note=f"timeout {self.timeout}s",
+                               raw=_raw_transcript(e.stdout, e.stderr))
 
 
 class AiderAgent:
@@ -191,6 +217,8 @@ class AiderAgent:
             return AgentResult(
                 invoked=proc.returncode == 0,
                 note=f"exit {proc.returncode}; last output: "
-                     f"{(proc.stdout or proc.stderr)[-200:]!r}")
-        except subprocess.TimeoutExpired:
-            return AgentResult(invoked=False, note=f"timeout {self.timeout}s")
+                     f"{(proc.stdout or proc.stderr)[-200:]!r}",
+                raw=_raw_transcript(proc.stdout, proc.stderr))
+        except subprocess.TimeoutExpired as e:
+            return AgentResult(invoked=False, note=f"timeout {self.timeout}s",
+                               raw=_raw_transcript(e.stdout, e.stderr))

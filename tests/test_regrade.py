@@ -136,6 +136,21 @@ def test_ledger_bundle_regrades_consistent_and_tampering_is_caught(tmp_path):
     assert any("fixed" in m for m in r.mismatches)
 
 
+def test_agent_raw_is_carried_but_never_required(tmp_path):
+    """New bundles preserve the full agent transcript per verdict
+    (agent_raw); the regrader neither reads nor requires it. A bundle
+    stripped of the field — the shape of every pre-raw bundle, including
+    the shipped ones — regrades identically."""
+    b = certify(OracleAgent(), INTERVALS, tmp_path / "raw")
+    assert all("agent_raw" in v for v in b["verdicts"])
+    p = tmp_path / "raw" / "bundle.json"
+    assert regrade_bundle(p).status == "consistent"
+    for v in b["verdicts"]:
+        del v["agent_raw"]
+    p.write_text(json.dumps(b))
+    assert regrade_bundle(p).status == "consistent"
+
+
 def test_unknown_family_is_refused_not_guessed(tmp_path):
     p = _tampered(tmp_path, lambda b: b.update(family="not-a-family"))
     r = regrade_bundle(p)

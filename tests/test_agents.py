@@ -15,7 +15,7 @@ import pytest
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from certlab.agents import AiderAgent, ClaudeCodeAgent
+from certlab.agents import AiderAgent, ClaudeCodeAgent, _raw_transcript
 from certlab.tasks import INTERVALS, materialize
 from certlab.wedge import certify
 
@@ -25,7 +25,8 @@ def workdir(tmp_path):
     return materialize(INTERVALS.defects[0], INTERVALS, tmp_path / "work")
 
 
-def _fake_subprocess(monkeypatch, returncode=0, effect=None, raise_timeout=False):
+def _fake_subprocess(monkeypatch, returncode=0, effect=None,
+                     raise_timeout=False, stdout="fake output", stderr=""):
     """Replace certlab.agents' subprocess binding only — tasks/wedge keep
     the real one, so pytest still actually runs during certify."""
     calls = []
@@ -37,7 +38,7 @@ def _fake_subprocess(monkeypatch, returncode=0, effect=None, raise_timeout=False
         if effect:
             effect(pathlib.Path(cwd))
         return types.SimpleNamespace(returncode=returncode,
-                                     stdout="fake output", stderr="")
+                                     stdout=stdout, stderr=stderr)
 
     monkeypatch.setattr("certlab.agents.subprocess", types.SimpleNamespace(
         run=run, TimeoutExpired=subprocess.TimeoutExpired))
@@ -103,3 +104,37 @@ def test_fake_editing_aider_run_is_graded_by_the_wedge(tmp_path, monkeypatch):
     assert b["agent_id"] == "aider-headless" and b["agent_kind"] == "real"
     assert b["family"] == "intervals"
     assert sum(v["fixed"] for v in b["verdicts"]) == len(b["verdicts"]) == 6
+    # the full transcript rides along per verdict — bundle-only forensics
+    assert all(v["agent_raw"] == "fake output" for v in b["verdicts"])
+
+
+# --- raw-trace preservation: the whole transcript survives, not a 200-char
+# note; capped so one chatty run cannot balloon a bundle ---
+
+
+def test_adapters_capture_the_full_transcript(workdir, monkeypatch):
+    body = "line\n" * 400   # 2000 chars — far past the note's 200-char tail
+    _fake_subprocess(monkeypatch, stdout="HEAD-MARK\n" + body,
+                     stderr="warning: something odd\n")
+    for agent in (AiderAgent(), ClaudeCodeAgent()):
+        r = agent.run(workdir, INTERVALS, INTERVALS.defects[0])
+        assert "HEAD-MARK" in r.raw            # start survives, unlike note
+        assert "warning: something odd" in r.raw
+        assert "--- stderr ---" in r.raw
+        assert "HEAD-MARK" not in r.note       # the note stays a tail summary
+
+
+def test_raw_transcript_is_capped_and_keeps_the_tail():
+    head, tail = "HEAD-MARK", "TAIL-MARK"
+    raw = _raw_transcript(head + "x" * 300_000 + tail, "")
+    assert len(raw) < 210_000
+    assert raw.endswith(tail) and "truncated" in raw
+    assert head not in raw
+    # under the cap: byte-for-byte, no marker
+    assert _raw_transcript("small out", "") == "small out"
+
+
+def test_timeout_still_yields_a_transcript_field(workdir, monkeypatch):
+    _fake_subprocess(monkeypatch, raise_timeout=True)
+    r = AiderAgent(timeout=7).run(workdir, INTERVALS, INTERVALS.defects[0])
+    assert not r.invoked and r.raw == ""   # nothing captured, field present
