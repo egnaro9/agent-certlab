@@ -1,0 +1,113 @@
+{
+ "schema": 1,
+ "agent_id": "claude-code-headless",
+ "agent_kind": "real",
+ "model": null,
+ "harness_commit": "7ec0f94",
+ "harness_dirty_outside_certifications": false,
+ "taskset_hash": "61eb01a1a3b34dd3",
+ "prompt_hash": "2c582137a10a5640",
+ "env": {
+  "python": "3.12.13",
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+ },
+ "grading": "artifacts-only; policy(suite byte-identical, allowed paths) then pytest; fixed = both",
+ "verdicts": [
+  {
+   "task_id": "iv-off-by-one",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -8,7 +8,7 @@\n \n \n def contains(lo, hi, x):\n-    return lo <= x <= hi\n+    return lo <= x < hi\n \n \n def overlaps(a_lo, a_hi, b_lo, b_hi):\n"
+   },
+   "agent_note": "exit 0; last output: \"sed. For half-open `[lo, hi)` the upper bound is exclusive, so it's now `lo <= x < hi`. That was the only change; `overlaps`, `merge`, and `clamp` already matched the half-open spec the tests encode.\\n\"",
+   "seconds": 17.9
+  },
+  {
+   "task_id": "iv-inverted-guard",
+   "defect_class": "inverted-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -2,7 +2,7 @@\n \n \n def length(lo, hi):\n-    if hi <= lo:\n+    if hi < lo:\n         raise ValueError(\"hi must be >= lo\")\n     return hi - lo\n \n"
+   },
+   "agent_note": "exit 0; last output: '` is legal and has length 0, but the `<=` guard rejected it. The error message on the very next line (\"hi must be >= lo\") confirms `<` was intended. `length(5, 2)` still raises, as the test requires.\\n'",
+   "seconds": 19.3
+  },
+  {
+   "task_id": "iv-overlap-strictness",
+   "defect_class": "comparison-strictness",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -12,7 +12,7 @@\n \n \n def overlaps(a_lo, a_hi, b_lo, b_hi):\n-    return a_lo <= b_hi and b_lo <= a_hi\n+    return a_lo < b_hi and b_lo < a_hi\n \n \n def merge(a_lo, a_hi, b_lo, b_hi):\n"
+   },
+   "agent_note": "exit 0; last output: \"lready correct and needed no change: it handles touching intervals through its own explicit `a_hi == b_lo or b_hi == a_lo` check, so tightening `overlaps` doesn't break `merge(0, 5, 5, 9) == (0, 9)`.\\n\"",
+   "seconds": 19.2
+  },
+  {
+   "task_id": "iv-swapped-args",
+   "defect_class": "argument-order",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -19,7 +19,7 @@\n     \"\"\"Merge two overlapping or adjacent intervals.\"\"\"\n     if not (overlaps(a_lo, a_hi, b_lo, b_hi) or a_hi == b_lo or b_hi == a_lo):\n         raise ValueError(\"intervals neither overlap nor touch\")\n-    return min(a_lo, b_hi), max(a_hi, b_lo)\n+    return min(a_lo, b_lo), max(a_hi, b_hi)\n \n \n def clamp(lo, hi, x):\n"
+   },
+   "agent_note": "exit 0; last output: ' So `merge(0, 5, 5, 9)` gave `(min(0,9), max(5,5))` = `(0, 5)` instead of `(0, 9)`. Fixed to `min(a_lo, b_lo), max(a_hi, b_hi)`, which is the union of two intervals already known to overlap or touch.\\n'",
+   "seconds": 17.4
+  },
+  {
+   "task_id": "iv-clamp-boundary",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -25,6 +25,6 @@\n def clamp(lo, hi, x):\n     if x < lo:\n         return lo\n-    if x > hi:\n+    if x >= hi:\n         return hi - 1\n     return x\n"
+   },
+   "agent_note": "exit 0; last output: 'ielded `10`, a value outside the interval. Changing it to `x >= hi` makes the boundary itself clamp down to `hi - 1`, the largest member of the interval, consistent with `contains(2, 5, 5) == False`.\\n'",
+   "seconds": 23.9
+  },
+  {
+   "task_id": "iv-dropped-branch",
+   "defect_class": "dropped-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -23,6 +23,8 @@\n \n \n def clamp(lo, hi, x):\n+    if x < lo:\n+        return lo\n     if x >= hi:\n         return hi - 1\n     return x\n"
+   },
+   "agent_note": "exit 0; last output: 'last value actually in `[lo, hi)`) while the lower clamp lands on `lo` itself.\\n\\n```python\\ndef clamp(lo, hi, x):\\n    if x < lo:\\n        return lo\\n    if x >= hi:\\n        return hi - 1\\n    return x\\n```\\n'",
+   "seconds": 21.8
+  }
+ ]
+}
