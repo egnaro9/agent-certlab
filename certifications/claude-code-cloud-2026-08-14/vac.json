@@ -19,7 +19,7 @@
   }
  },
  "protocol": {
-  "issuer": "github.com/egnaro9/agent-certlab",
+  "issuer": "egnaro9/agent-certlab",
   "issuer_commit": "7ec0f94",
   "task": "intervals",
   "hashes": {

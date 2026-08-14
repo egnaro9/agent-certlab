@@ -29,7 +29,7 @@ import pathlib
 import subprocess
 import sys
 
-ISSUER = "github.com/egnaro9/agent-certlab"
+ISSUER = "egnaro9/agent-certlab"   # SPEC 2.3: plain owner/name
 
 _CONTROL_POLICY = (
     "constructed calibration agents gate every certification "
@@ -155,7 +155,7 @@ def vac_manifest(cert_dir: pathlib.Path) -> dict:
         "replay": {
             "issuer_commit": commit,
             "commands": [
-                f"git clone https://{ISSUER} issuer",
+                f"git clone https://github.com/{ISSUER} issuer",
                 f"git -C issuer checkout {replay_at}",
                 "python -m pip install -e './issuer[test]'",
                 "python -m certlab.regrade bundle.json",
