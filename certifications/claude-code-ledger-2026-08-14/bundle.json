@@ -1,0 +1,120 @@
+{
+ "schema": 1,
+ "agent_id": "claude-code-headless",
+ "agent_kind": "real",
+ "model": null,
+ "family": "ledger",
+ "harness_commit": "8065d6e",
+ "harness_dirty_outside_certifications": false,
+ "taskset_hash": "385077b2a93b5ff7",
+ "prompt_hash": "dbcbc37d4e776a1a",
+ "env": {
+  "python": "3.14.6",
+  "platform": "macOS-26.6-arm64-arm-64bit-Mach-O"
+ },
+ "grading": "artifacts-only; policy(suite byte-identical, allowed paths) then pytest; fixed = both",
+ "verdicts": [
+  {
+   "task_id": "lg-debit-sign",
+   "defect_class": "dropped-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "ledger/models.py"
+   ],
+   "diffs": {
+    "ledger/models.py": "--- issued/ledger/models.py\n+++ after/ledger/models.py\n@@ -13,7 +13,7 @@\n         raise ValueError(f\"unknown kind: {kind!r}\")\n     if amount_cents <= 0:\n         raise ValueError(\"amount_cents must be positive\")\n-    signed = amount_cents\n+    signed = -amount_cents if kind == \"debit\" else amount_cents\n     return (day, signed, kind)\n \n \n"
+   },
+   "agent_note": "exit 0; last output: 's` now yields `{1: 700, 3: -100}`, `largest_debit` finds `300`, and `closing_balance([entry(1, 50, \"debit\")])` now raises on the negative running balance. Worth confirming with a real run regardless.\\n'",
+   "seconds": 77.9,
+   "agent_raw": "`\u2605 Insight \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n- The fix goes in `models.py` rather than at the consumers because the sign is a *representation* invariant, not a per-caller concern. Patching `largest_debit` to use `max()` and `daily_totals` to subtract would green some tests while leaving `check()` unable to ever detect an overdraft \u2014 the exact class of \"compensating edit\" the test file's line-29 comment warns against.\n- Note `largest_debit` returns `-min(debits)`, not `max(abs(...))`. Once the invariant holds, \"biggest magnitude debit\" *is* the minimum, and that only reads correctly if you trust the sign convention. Invariants like this let downstream code get simpler, but they punish you loudly when the boundary leaks \u2014 as it did here.\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n\n**Fixed** \u2014 `ledger/models.py:16`, one line:\n\n```python\nsigned = -amount_cents if kind == \"debit\" else amount_cents\n```\n\n**I could not run the suite to confirm.** `python` isn't on this shell's PATH, and both `python3 -m pytest -q` and `/usr/bin/python3 -m pytest -q` came back needing approval that wasn't granted. Please approve one of those (or tell me the interpreter path you use) and I'll run it.\n\nHand-traced all 11 tests against the patched code and each passes \u2014 including the three that were provably red before: `daily_totals` now yields `{1: 700, 3: -100}`, `largest_debit` finds `300`, and `closing_balance([entry(1, 50, \"debit\")])` now raises on the negative running balance. Worth confirming with a real run regardless.\n"
+  },
+  {
+   "task_id": "lg-opening-ignored",
+   "defect_class": "ignored-argument",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "ledger/validate.py"
+   ],
+   "diffs": {
+    "ledger/validate.py": "--- issued/ledger/validate.py\n+++ after/ledger/validate.py\n@@ -10,7 +10,8 @@\n \n \n def running_balances(entries, opening=0):\n-    total = 0\n+    \"\"\"Balance after each entry, starting from the opening balance.\"\"\"\n+    total = opening\n     balances = []\n     for e in entries:\n         total += signed_amount(e)\n"
+   },
+   "agent_note": "exit 0; last output: 'be the *only* thing making a ledger legal, which is unfalsifiable when `opening` is dropped. That assert is the test suite naming the bug out loud.\\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\\n'",
+   "seconds": 56.8,
+   "agent_raw": "Fixed in `ledger/validate.py:12` \u2014 `running_balances` accepted an `opening` parameter and then ignored it, seeding its accumulator with a literal `0`.\n\n```python\ndef running_balances(entries, opening=0):\n    \"\"\"Balance after each entry, starting from the opening balance.\"\"\"\n    total = opening\n```\n\nThat one line was behind all three failures: `running_balances(entries, opening=500)`, `check([entry(1, 100, \"debit\")], opening=100)`, and `closing_balance(entries, opening=100)`. `report.py` and `models.py` were correct \u2014 they forwarded `opening` down faithfully, which is exactly why the defect only showed up through the cross-module paths the test comments point at.\n\n**Not verified by a run**: `python3 -m pytest -q` needs approval in this session and was declined three times, so I traced all 11 tests by hand instead of executing them. Please run it to confirm.\n\n`\u2605 Insight \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n- An unused parameter is a nastier bug than a wrong formula, because the *type* is right and the *call sites* are right \u2014 nothing downstream can compensate. The test file's design leans on this: it pins `running_balances` directly (line 41) precisely so a fix can't be faked in `report.py`.\n- The `check([entry(1, 100, \"debit\")], opening=100)` case is the interesting one \u2014 it asserts an opening balance can be the *only* thing making a ledger legal, which is unfalsifiable when `opening` is dropped. That assert is the test suite naming the bug out loud.\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n"
+  },
+  {
+   "task_id": "lg-order-strictness",
+   "defect_class": "comparison-strictness",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "ledger/validate.py"
+   ],
+   "diffs": {
+    "ledger/validate.py": "--- issued/ledger/validate.py\n+++ after/ledger/validate.py\n@@ -6,7 +6,7 @@\n def is_ordered(entries):\n     \"\"\"Days never decrease; several entries on one day are legal.\"\"\"\n     days = [day_of(e) for e in entries]\n-    return all(a < b for a, b in zip(days, days[1:]))\n+    return all(a <= b for a, b in zip(days, days[1:]))\n \n \n def running_balances(entries, opening=0):\n"
+   },
+   "agent_note": "exit 0; last output: \" passes, including the two that don't involve ordering at all (`largest_debit` \u2192 `-min([-50,-300,-20]) == 300`; `closing_balance([], opening=40) == 40` via the empty-list fallback at `report.py:10`).\\n\"",
+   "seconds": 53.6,
+   "agent_raw": "One-character fix in `ledger/validate.py:9` \u2014 `is_ordered` used strict `<`, rejecting multiple entries on the same day.\n\n`\u2605 Insight \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n- The comparator was the *only* defect: `all(a < b ...)` enforces *strictly increasing* days, but the function's own docstring (\"Days never decrease; several entries on one day are legal\") specifies *non-decreasing* \u2014 `<=`. Classic off-by-strictness bug where the doc was right and the code wasn't.\n- The blast radius was wider than it looked because `check()` is the gate every `report.py` function calls first. So a validate-layer bug failed 3 tests across two modules \u2014 `test_validate_ordering_allows_same_day` directly, plus `test_report_daily_totals_accumulate_within_a_day` (days `1,1,3`) transitively.\n- The sign convention in `models.py` is a red herring the test file explicitly baits you toward. Debits are negated once, at construction (`models.py:16`), so every downstream consumer just adds \u2014 `running_balances`, `daily_totals`, and `largest_debit` all needed no sign handling and all were already correct.\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n\nI could not run the suite \u2014 `python -m pytest -q`, `python3 -m pytest -q`, and `pytest -q` each require approval in this session, so the fix is verified by reading, not by a green run. Approve one of those and I'll confirm.\n\nMy trace of all 10 tests against the patched code: every assertion passes, including the two that don't involve ordering at all (`largest_debit` \u2192 `-min([-50,-300,-20]) == 300`; `closing_balance([], opening=40) == 40` via the empty-list fallback at `report.py:10`).\n"
+  },
+  {
+   "task_id": "lg-balance-boundary",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "ledger/validate.py"
+   ],
+   "diffs": {
+    "ledger/validate.py": "--- issued/ledger/validate.py\n+++ after/ledger/validate.py\n@@ -23,5 +23,5 @@\n     if not is_ordered(entries):\n         raise ValueError(\"entries out of order\")\n     for i, b in enumerate(running_balances(entries, opening)):\n-        if b <= 0:\n+        if b < 0:\n             raise ValueError(f\"balance below zero after entry {i}\")\n"
+   },
+   "agent_note": "exit 0; last output: \"at guard: `running_balances([])` returns `[]`, so there's no last element to fall back on. The opening balance is the identity element of the fold.\\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\\n\"",
+   "seconds": 51.6,
+   "agent_raw": "Fixed `ledger/validate.py:26` \u2014 `if b <= 0` \u2192 `if b < 0`. A zero balance is a legal ledger; only *negative* is a violation.\n\nI could not run `python -m pytest -q` to confirm \u2014 the Bash call needs your approval (and `python` isn't on PATH here; `python3` is). Please approve the run, or execute it yourself.\n\nHand-tracing the suite against the fixed code, all 9 tests pass:\n- `check([credit 100, debit 100])` \u2192 balances `[100, 0]`, no raise \u2713\n- `check([debit 100], opening=100)` \u2192 `[0]`, no raise \u2713\n- `check([credit 100, debit 150])` \u2192 `[100, -50]` still raises `\"balance below zero after entry 1\"` \u2713\n\n`\u2605 Insight \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n- Everything else in the package was already correct \u2014 the `-min(debits)` idiom in `largest_debit` and the `balances[-1] if balances else opening` guard in `closing_balance` both handle their empty/edge cases properly.\n- Worth noting *why* `closing_balance([], opening=40) == 40` needs that guard: `running_balances([])` returns `[]`, so there's no last element to fall back on. The opening balance is the identity element of the fold.\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n"
+  },
+  {
+   "task_id": "lg-daily-overwrite",
+   "defect_class": "accumulator-overwrite",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "ledger/report.py"
+   ],
+   "diffs": {
+    "ledger/report.py": "--- issued/ledger/report.py\n+++ after/ledger/report.py\n@@ -14,7 +14,7 @@\n     check(entries, opening)\n     totals = {}\n     for e in entries:\n-        totals[day_of(e)] = signed_amount(e)\n+        totals[day_of(e)] = totals.get(day_of(e), 0) + signed_amount(e)\n     return totals\n \n \n"
+   },
+   "agent_note": "exit 0; last output: \"not run `python -m pytest -q` \u2014 the Bash permission prompt came back denied on each attempt (note: `python` isn't on PATH here; `python3` is). Approve the command and I'll confirm the suite is green.\\n\"",
+   "seconds": 54.6,
+   "agent_raw": "Fixed one bug: `daily_totals` in `ledger/report.py:17` overwrote each day's entry instead of accumulating.\n\n```python\ntotals[day_of(e)] = totals.get(day_of(e), 0) + signed_amount(e)\n```\n\n`\u2605 Insight \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n- The bug hid behind the module's own docstring contract: `models.py` says \"the sign is the kind's job, applied exactly here and nowhere else,\" so `report.py` correctly does plain addition everywhere \u2014 `closing_balance` and `largest_debit` are sign-clean. Only the dict-write in `daily_totals` was an assignment where every sibling was an accumulation.\n- The test comment at line 7-9 is a deliberate trap-marker: it warns that a sign defect in `models` would only surface via `validate`/`report`. That points you at the cross-module paths, but the actual defect was the one local write that broke the \"just adds\" invariant.\n- I traced the other six tests by hand against the source and they all satisfy their assertions (`is_ordered` uses `<=` for same-day, `check` uses `< 0` so zero-touch is legal, `largest_debit` returns `-min(debits)`), so this is the single defect.\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n\nI could not run `python -m pytest -q` \u2014 the Bash permission prompt came back denied on each attempt (note: `python` isn't on PATH here; `python3` is). Approve the command and I'll confirm the suite is green.\n"
+  },
+  {
+   "task_id": "lg-largest-debit-extremum",
+   "defect_class": "inverted-extremum",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "ledger/report.py"
+   ],
+   "diffs": {
+    "ledger/report.py": "--- issued/ledger/report.py\n+++ after/ledger/report.py\n@@ -21,5 +21,6 @@\n def largest_debit(entries, opening=0):\n     \"\"\"The biggest single debit, as a positive magnitude (0 if none).\"\"\"\n     check(entries, opening)\n+    # debits are stored negative, so the biggest magnitude is the minimum\n     debits = [signed_amount(e) for e in entries if signed_amount(e) < 0]\n-    return -max(debits) if debits else 0\n+    return -min(debits) if debits else 0\n"
+   },
+   "agent_note": "exit 0; last output: ' mental sign-flip entirely. I kept the minimal `min` edit since the task was a bug fix, but that shape is worth considering if this function grows.\\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\\n'",
+   "seconds": 66.9,
+   "agent_raw": "**Fix applied \u2014 `ledger/report.py:25`, `max` \u2192 `min`.** I could not run the suite: every `pytest` invocation came back \"requires approval\" (5 attempts, including the sandbox override), so the green run is unverified by me.\n\n**The defect:** `largest_debit` filters to the negative signed amounts, then took `max(debits)`. On the negative scale that picks the *least*-negative value \u2014 the smallest debit. For the suite's `[-50, -300, -20]` it returned `20` instead of `300`.\n\n```python\ndebits = [signed_amount(e) for e in entries if signed_amount(e) < 0]\nreturn -min(debits) if debits else 0\n```\n\nTraced by hand against every assertion, this is the only failure: `models.py` and `validate.py` are internally consistent with the negative-debit convention, and the other `report.py` functions only ever sum (where sign direction doesn't matter). `largest_debit([entry(1, 10, \"credit\")]) == 0` still holds \u2014 the empty-list guard is untouched, and `min` never sees an empty sequence.\n\nPlease run `python3 -m pytest -q` yourself to confirm (note: `python` isn't on PATH here, only `python3`).\n\n`\u2605 Insight \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n- This is the classic cost of a **signed-magnitude convention**: storing debits negative makes every aggregation a free `+`, but it silently inverts `max`/`min`/`sorted`/`abs`-free comparisons for any code asking \"which is biggest?\" The convention pays off in three functions and bites in the fourth.\n- The test suite is structured as a deliberate trap \u2014 its header comment notes the sign convention is \"pinned downstream,\" meaning unit tests of `models.py` alone would pass with a sign bug. Only a cross-module *extremum* query distinguishes the two ends of the range. That's a good argument for testing at the seam, not just per-module.\n- A defensive alternative is `max(-signed_amount(e) for e in entries if signed_amount(e) < 0)` \u2014 normalize to magnitude first, then ask for the max. It reads as the English spec (\"the biggest single debit, as a positive magnitude\") and removes the mental sign-flip entirely. I kept the minimal `min` edit since the task was a bug fix, but that shape is worth considering if this function grows.\n`\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`\n"
+  }
+ ]
+}
