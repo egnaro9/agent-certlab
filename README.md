@@ -12,6 +12,13 @@ suites) → [reference-fleet](https://github.com/egnaro9/reference-fleet)
 (certified defect models + the [audit
 board](https://egnaro9.github.io/reference-fleet/)) → this lab.
 
+Every capability contract here is backed by a replayable evidence bundle — one
+per run under [`certifications/`](certifications) — and each one is registered
+in the program's [evidence registry](https://egnaro9.github.io/vac-protocol/)
+([registry.json](https://github.com/egnaro9/vac-protocol/blob/main/registry.json)).
+Ten minutes and no API key is enough to try to break one:
+[REPLAY_REQUEST.md](https://github.com/egnaro9/vac-protocol/blob/main/REPLAY_REQUEST.md).
+
 **Note what is under test here: an agent, not a model.** The lab certifies
 the whole software system that edits code (today: Claude Code, driven
 headless); there is no model artifact in this repo by design. The program's
