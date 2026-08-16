@@ -144,6 +144,10 @@ def vac_manifest(cert_dir: pathlib.Path) -> dict:
             "checks": [{
                 "profile": "certlab-bundle-v1",
                 "artifact": "bundle.json",
+                # CONTRACT.md was pinned as evidence and read by no check, so
+                # the artifact a human actually reads carried a headline
+                # nothing verified. `render` binds it to the verdicts.
+                "render": "CONTRACT.md",
                 "expect": {
                     "verdicts": n,
                     "fixed": fixed,
