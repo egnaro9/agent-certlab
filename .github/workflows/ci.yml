@@ -14,6 +14,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[test]"
+      - name: install the real verifier BEFORE pytest
+        # The verifier-liveness tests (shipped pass, fresh emission passes,
+        # tampered copy refused) need `vac` importable. Until 2026-08-17 they
+        # keyed only on a sibling checkout CI never had, so they skipped on
+        # every automated run; tests/test_vac.py now fails collection under CI
+        # if no verifier is available, so this step cannot be dropped silently.
+        run: pip install "git+https://github.com/egnaro9/vac-protocol"
       - name: the wedge must separate known-bad from known-good
         run: python -m pytest tests/ -q
       - name: every committed certification must regrade consistent

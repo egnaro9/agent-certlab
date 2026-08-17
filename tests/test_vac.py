@@ -10,6 +10,7 @@ and the structural bindings below still run.
 """
 
 import hashlib
+import importlib.util
 import os
 import json
 import pathlib
@@ -30,22 +31,28 @@ from certlab.wedge import certify
 CERT_DIRS = sorted(p.parent
                    for p in (REPO / "certifications").glob("*/bundle.json"))
 VAC_REPO = REPO.parent / "vac-protocol"
-_HAVE_VERIFIER = (VAC_REPO / "vac" / "verify.py").is_file()
+_HAVE_SIBLING = (VAC_REPO / "vac" / "verify.py").is_file()
+_HAVE_INSTALLED = importlib.util.find_spec("vac") is not None
+_HAVE_VERIFIER = _HAVE_SIBLING or _HAVE_INSTALLED
 
 if os.environ.get("CI") and not _HAVE_VERIFIER:
-    # In CI the verifier is hard-installed, so its absence means the workflow
-    # changed and these tests would silently skip. A suite that reports "all
-    # passed" with the verifier missing certifies nothing, which is the exact
-    # failure mode this repo is built to detect. Fail at collection instead.
+    # Until 2026-08-17 these tests keyed ONLY on a sibling checkout, which CI
+    # never had, so the three verifier-liveness tests (shipped bundles pass, a
+    # fresh emission passes, a tampered copy is refused) had never once run in
+    # any automated environment. The workflow's separate verify step covered
+    # shipped bundles but not emission or tamper-liveness. A suite that reports
+    # "all passed" with the verifier missing certifies nothing, which is the
+    # exact failure mode this repo is built to detect. Fail at collection.
     raise RuntimeError(
-        "vac-protocol checkout is missing but CI is set. The verifier tests "
+        "no vac verifier available but CI is set: neither a vac-protocol "
+        "sibling checkout nor an installed `vac` package. The verifier tests "
         "would skip and the run would read green while certifying nothing. "
-        "Restore the checkout step in .github/workflows rather than skipping.")
+        "Install it before pytest (see ci.yml) rather than skipping.")
 
 needs_verifier = pytest.mark.skipif(
     not _HAVE_VERIFIER,
-    reason="vac-protocol sibling checkout not present (local dev only; "
-           "absence is a hard error under CI)")
+    reason="no vac verifier (sibling checkout or installed package); local "
+           "dev only, absence is a hard error under CI")
 
 
 def _sha256(p: pathlib.Path) -> str:
@@ -55,9 +62,10 @@ def _sha256(p: pathlib.Path) -> str:
 def _verify(bundle_dir: pathlib.Path) -> subprocess.CompletedProcess:
     """The real verifier, in a subprocess with the sibling repo as cwd so
     `python -m vac.verify` resolves without installing anything."""
+    cwd = VAC_REPO if _HAVE_SIBLING else REPO
     return subprocess.run(
         [sys.executable, "-m", "vac.verify", str(bundle_dir)],
-        cwd=VAC_REPO, capture_output=True, text=True)
+        cwd=cwd, capture_output=True, text=True)
 
 
 def test_committed_manifests_are_fresh_compiles():
