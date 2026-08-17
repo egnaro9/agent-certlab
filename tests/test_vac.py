@@ -10,6 +10,7 @@ and the structural bindings below still run.
 """
 
 import hashlib
+import os
 import json
 import pathlib
 import shutil
@@ -29,9 +30,22 @@ from certlab.wedge import certify
 CERT_DIRS = sorted(p.parent
                    for p in (REPO / "certifications").glob("*/bundle.json"))
 VAC_REPO = REPO.parent / "vac-protocol"
+_HAVE_VERIFIER = (VAC_REPO / "vac" / "verify.py").is_file()
+
+if os.environ.get("CI") and not _HAVE_VERIFIER:
+    # In CI the verifier is hard-installed, so its absence means the workflow
+    # changed and these tests would silently skip. A suite that reports "all
+    # passed" with the verifier missing certifies nothing, which is the exact
+    # failure mode this repo is built to detect. Fail at collection instead.
+    raise RuntimeError(
+        "vac-protocol checkout is missing but CI is set. The verifier tests "
+        "would skip and the run would read green while certifying nothing. "
+        "Restore the checkout step in .github/workflows rather than skipping.")
+
 needs_verifier = pytest.mark.skipif(
-    not (VAC_REPO / "vac" / "verify.py").is_file(),
-    reason="vac-protocol sibling checkout not present")
+    not _HAVE_VERIFIER,
+    reason="vac-protocol sibling checkout not present (local dev only; "
+           "absence is a hard error under CI)")
 
 
 def _sha256(p: pathlib.Path) -> str:
