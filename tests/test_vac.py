@@ -124,7 +124,7 @@ def test_certify_emits_a_manifest_beside_the_contract(tmp_path):
     b = certify(OracleAgent(), INTERVALS, tmp_path / "oracle")
     out = tmp_path / "oracle"
     man = json.loads((out / "vac.json").read_text())
-    assert man["vac_version"] == "0.1"
+    assert man["vac_version"] == "0.2"
     assert man["claim"]["capability"].startswith(
         "repair-seeded-defects:intervals")
     assert man["protocol"]["issuer_commit"] == b["harness_commit"]
@@ -133,6 +133,16 @@ def test_certify_emits_a_manifest_beside_the_contract(tmp_path):
     for e in man["evidence"]:
         assert e["sha256"] == _sha256(out / e["path"])
     assert man["results"]["checks"][0]["expect"]["fixed"] == len(b["verdicts"])
+    # VAC 2.5.1: at 0.2 a summary number binds on its full path beneath
+    # `summary.`, against a pool keyed <scope>.<field>, and the verifier
+    # DERIVES the scope from this check's primary evidence filename. So the
+    # summary must nest under the artifact's stem, and a bare `tasks` at the
+    # top level would bind to nothing.
+    scope = man["results"]["checks"][0]["artifact"].split(".")[0]
+    assert set(man["results"]["summary"]) == {scope}, man["results"]["summary"]
+    assert man["results"]["summary"][scope]["verdicts"] == len(b["verdicts"])
+    assert man["results"]["summary"][scope]["fixed"] == sum(
+        1 for v in b["verdicts"] if v["fixed"])
     # emission is idempotent: same inputs, same bytes
     before = (out / "vac.json").read_bytes()
     write_vac(out)
