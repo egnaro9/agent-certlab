@@ -78,6 +78,10 @@ def _replay_commit(repo: pathlib.Path, harness_commit: str) -> str:
     return first.stdout.split()[0]
 
 
+_ARTIFACT = "bundle.json"   # the check's PRIMARY evidence ref; VAC 2.5.1
+                            # derives this bundle's scope from its filename
+
+
 def vac_manifest(cert_dir: pathlib.Path) -> dict:
     """The vac.json content for one certification directory — a pure
     function of bundle.json bytes plus git history; never writes."""
@@ -88,6 +92,27 @@ def vac_manifest(cert_dir: pathlib.Path) -> dict:
     modes: dict[str, int] = {}
     for mode in sorted(x["failure_mode"] for x in vs if x["failure_mode"]):
         modes[mode] = modes.get(mode, 0) + 1
+    # VAC 2.5.1: at vac_version 0.2 a summary number binds on its FULL path
+    # beneath `summary.`, against a pool keyed <scope>.<field>, where scope is
+    # DERIVED by the verifier from this check's primary evidence filename.
+    # Deriving it here from the same literal keeps the two from drifting: if
+    # _ARTIFACT is ever renamed, the summary follows it.
+    scope = _ARTIFACT.split(".")[0]
+    recomputed = {"verdicts": n, "fixed": fixed,
+                  "policy_ok": sum(1 for v in vs if v["policy_ok"]),
+                  "tests_ok": sum(1 for v in vs if v["tests_ok"])}
+    # A failure_mode is issuer free text, and SPEC 3.1 withholds one whose
+    # name collides with a recomputed field so issuer text cannot redefine
+    # what `fixed` is held to. Flattened into the scope object, a collision
+    # would also silently OVERWRITE the real value here, so refuse instead of
+    # emitting a bundle whose headline is not what it appears to be.
+    clash = sorted(set(modes) & set(recomputed))
+    if clash:
+        raise ValueError(
+            f"{cert_dir.name}: failure_mode {clash} collides with a "
+            "recomputed field name. VAC 3.1 withholds such a mode from the "
+            "pool, so this summary key would bind to the recomputed value "
+            "rather than the mode count. Rename the mode in the harness.")
     family = bundle.get("family", "intervals")   # pre-family bundles
     commit = bundle["harness_commit"]
     replay_at = _replay_commit(repo, commit)
@@ -107,7 +132,7 @@ def vac_manifest(cert_dir: pathlib.Path) -> dict:
             "still binds these verdicts to the byte-identical pinned "
             "family)")
     return {
-        "vac_version": "0.1",
+        "vac_version": "0.2",
         "claim": {
             "capability": (f"repair-seeded-defects:{family} — "
                            f"{bundle['agent_id']} fixed {fixed}/{n} seeded "
@@ -140,20 +165,20 @@ def vac_manifest(cert_dir: pathlib.Path) -> dict:
             and p.relative_to(cert_dir).as_posix() != "vac.json"
         ],
         "results": {
-            "summary": {"tasks": n, "fixed": fixed, "failure_modes": modes},
+            # `tasks` was the old name for the recomputed field `verdicts`,
+            # and under 0.1 it bound only through the loose tier: any value
+            # equal to SOME recomputed quantity anywhere in the bundle. The
+            # modes are flattened rather than nested because a 0.2 summary
+            # path is exactly <scope>.<field>.
+            "summary": {scope: {"verdicts": n, "fixed": fixed, **modes}},
             "checks": [{
                 "profile": "certlab-bundle-v1",
-                "artifact": "bundle.json",
+                "artifact": _ARTIFACT,
                 # CONTRACT.md was pinned as evidence and read by no check, so
                 # the artifact a human actually reads carried a headline
                 # nothing verified. `render` binds it to the verdicts.
                 "render": "CONTRACT.md",
-                "expect": {
-                    "verdicts": n,
-                    "fixed": fixed,
-                    "policy_ok": sum(1 for v in vs if v["policy_ok"]),
-                    "tests_ok": sum(1 for v in vs if v["tests_ok"]),
-                },
+                "expect": dict(recomputed),
             }],
         },
         "replay": {
