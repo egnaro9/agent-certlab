@@ -21,6 +21,13 @@ jobs:
       - uses: egnaro9/vac-gate@a2d78ddda085761fb00e7f7f34a685af6cefe17b  # pinned a2d78dd, was @main
         with:
           bundle_path: certifications/claude-code-machine-2026-08-14
+          # Declared keys must BE recorded and MATCH, so this file is a claim, not
+          # config. taskset_hash/prompt_hash are derived from live code (see
+          # certlab/regrade.py:96), so editing a task or prompt fires binding-drift.
+          # NOT declared, deliberately: model (subject.version.model is null, and a
+          # null pin binds nothing), python and harness_commit (both describe the
+          # SUBJECT at certification time, not anything this workflow can verify).
+          bindings: bindings.json
           require_agent: claude-code-headless
           require_family: machine
           regrade: "true"
