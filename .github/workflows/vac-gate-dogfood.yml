@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: egnaro9/vac-gate@main
+      - uses: egnaro9/vac-gate@a2d78ddda085761fb00e7f7f34a685af6cefe17b  # pinned a2d78dd, was @main
         with:
           bundle_path: certifications/claude-code-machine-2026-08-14
           require_agent: claude-code-headless
