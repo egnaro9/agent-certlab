@@ -24,3 +24,9 @@ jobs:
           require_agent: claude-code-headless
           require_family: machine
           regrade: "true"
+          # regrade does `pip install -e` on the issuer the BUNDLE names, and a bundle
+          # is an unsigned self-consistent document, so its author chose that name.
+          # This list is therefore a trust decision, not a formality: only this
+          # repository's own issuer may execute on this runner. A bundle naming any
+          # other issuer fails issuer-not-allowed before anything is cloned.
+          allowed_issuers: egnaro9/agent-certlab
