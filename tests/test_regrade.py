@@ -181,3 +181,72 @@ def test_unknown_family_is_refused_not_guessed(tmp_path):
     assert "cannot regrade at this code version" in r.detail
     assert not r.mismatches
     assert main([str(p)]) == 0
+
+
+# ---------------------------------------------------------------------------
+# What the regrader never proved it compares.
+#
+# A mutation audit found that `_COMPARED = ("policy_ok", "tests_ok", "fixed", "failure_mode")`
+# could be reduced to `("fixed",)` with all 57 tests and both CI gates green. All four tamper
+# tests move the SAME field: three set verdicts[0]["fixed"]=False, and the diff-alteration
+# test changes a reconstruction so that `fixed` diverges. Three of the four compared fields
+# had zero tamper coverage, on the repo's central integrity claim.
+
+@pytest.mark.parametrize("field,bad", [
+    ("policy_ok", False),
+    ("tests_ok", False),
+    ("fixed", False),
+    ("failure_mode", "tampered-with-tests"),
+])
+def test_every_compared_field_is_actually_compared(tmp_path, field, bad):
+    """Tamper each compared field in turn and require the regrader to name THAT field.
+    Reducing _COMPARED to any proper subset must fail at least one of these. The shipped
+    bundle is 6/6 clean (True/True/True/''), so each `bad` value is the opposite of what is
+    recorded."""
+    def pick(b):
+        v = b["verdicts"][0]
+        assert v[field] != bad, f"fixture no longer differs on {field}"
+        v[field] = bad
+        pick.task = v["task_id"]
+    p = _tampered(tmp_path, pick)
+    r = regrade_bundle(p)
+    assert r.status == "mismatch", f"a tampered {field} regraded consistent"
+    assert any(m.startswith(f"{pick.task} {field}:") for m in r.mismatches), r.mismatches
+    assert main([str(p)]) == 1
+
+
+def test_a_bundle_that_omits_a_verdict_is_not_consistent(tmp_path):
+    """`if t not in recorded` could be deleted with the suite green. Every existing round trip
+    builds a COMPLETE bundle via certify and the tamper helper only edits fields in place, so
+    no test ever presented an incomplete bundle. The regrade gate is what CI runs to certify
+    internal honesty, and it would have passed a bundle that silently dropped a task it
+    failed."""
+    dropped = {}
+
+    def drop(b):
+        dropped["task_id"] = b["verdicts"].pop(0)["task_id"]
+    p = _tampered(tmp_path, drop)
+    r = regrade_bundle(p)
+    assert r.status == "mismatch", "a bundle missing a verdict regraded consistent"
+    assert any("missing verdict" in m and dropped["task_id"] in m for m in r.mismatches), \
+        r.mismatches
+
+
+def test_an_agent_unavailable_verdict_round_trips(tmp_path):
+    """`invoked=v["failure_mode"] != "agent-unavailable"` had no coverage: no committed bundle
+    carries an agent-unavailable verdict, and test_unavailable_agent_is_marked_not_scored
+    checks certify's output without ever regrading.
+
+    The failure direction is a false RED rather than a missed tamper: CI regrades every
+    committed bundle, so the first honest outage bundle shipped would fail the gate and read
+    as tampering.
+    """
+    def outage(b):
+        v = b["verdicts"][0]
+        v.update(failure_mode="agent-unavailable", fixed=False, policy_ok=True,
+                 tests_ok=False, changed_files=[], diffs={})
+    p = _tampered(tmp_path, outage)
+    r = regrade_bundle(p)
+    assert r.status == "consistent", (
+        "an honest outage verdict must regrade clean; recomputing it with invoked=True "
+        f"relabels it a capability finding: {r.mismatches}")

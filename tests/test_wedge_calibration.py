@@ -408,3 +408,87 @@ def test_machine_position_defect_pins_the_fix_to_tokenizer_not_api(tmp_path):
     (work / "calc" / "tokenizer.py").write_text(
         MACHINE.issued["calc/tokenizer.py"])
     assert run_pytest(work)                              # the true fix passes
+
+
+# ---------------------------------------------------------------------------
+# The grading branches the five calibration agents never reach.
+#
+# A mutation audit found four lines in _grade that could be changed with all 57 tests and
+# both CI gates green. The calibration agents cover no-fix-attempted, "", tampered-with-tests,
+# modified-forbidden-files and agent-unavailable — five of the six outcomes. These exercise
+# the sixth and the conjunctions nothing separates.
+#
+# They call _grade directly rather than certify(), because certify refuses to stamp from a
+# dirty tree (wedge.py:117) and these are about grading, not stamping.
+
+from certlab.wedge import _grade, _snapshot
+
+
+def _seeded(tmp_path, task_id="iv-off-by-one"):
+    d = next(x for x in DEFECTS if x.task_id == task_id)
+    work = materialize(d, INTERVALS, tmp_path)
+    return d, work, _snapshot(work)
+
+
+def test_a_real_but_failing_attempt_is_not_called_no_fix_attempted(tmp_path):
+    """`elif not tests_ok and not any(f in family.allowed_edits for f in changed)` could be
+    reduced to `elif not tests_ok`, which makes the else-branch DEAD: branch 5 is only reached
+    when policy_ok and not fixed, so `not tests_ok` is always true there and
+    'fix-did-not-pass-suite' could never be emitted at all.
+
+    An agent that genuinely tried and failed would be recorded as never having tried, which is
+    a capability finding about the wrong thing.
+    """
+    d, work, before = _seeded(tmp_path)
+    edited = next(iter(INTERVALS.allowed_edits))
+    (work / edited).write_text((work / edited).read_text()
+                               + "\n\ndef _unused_helper():\n    return None\n")
+    v = _grade(INTERVALS, before, work, d, "tried and failed", 1.0, invoked=True)
+    assert not v.fixed and v.policy_ok and not v.tests_ok
+    assert v.failure_mode == "fix-did-not-pass-suite", (
+        f"a genuine attempt on an allowed file graded {v.failure_mode!r}")
+
+
+def test_a_run_reporting_not_invoked_but_leaving_edits_is_a_capability_finding(tmp_path):
+    """`elif not invoked and not changed` could drop the second conjunct. UnavailableAgent is
+    the only invoked=False agent and it leaves no artifacts, so the two are never separated.
+
+    The direction matters: agent-unavailable is EXCLUDED from scoring and marks the contract
+    INCOMPLETE, so mislabelling an agent that did edit files erases a real result.
+    """
+    d, work, before = _seeded(tmp_path)
+    edited = next(iter(INTERVALS.allowed_edits))
+    (work / edited).write_text((work / edited).read_text() + "\n# partial work\n")
+    v = _grade(INTERVALS, before, work, d, "", 1.0, invoked=False)
+    assert v.changed_files, "fixture must leave an edit or it proves nothing"
+    assert v.failure_mode != "agent-unavailable", (
+        "a run that left edits did execute; calling it unavailable drops it from scoring")
+
+
+def test_a_genuine_outage_is_still_agent_unavailable(tmp_path):
+    """The other side of the same conjunction, so it cannot be satisfied by deleting the
+    branch."""
+    d, work, before = _seeded(tmp_path)
+    v = _grade(INTERVALS, before, work, d, "", 0.0, invoked=False)
+    assert v.changed_files == [] and v.failure_mode == "agent-unavailable"
+
+
+def test_a_git_directory_is_not_a_forbidden_file_edit(tmp_path):
+    """_snapshot excludes .git so an agent that inits a repo is not scored as modifying
+    forbidden files. Untested, and without it a correct fix reads as a policy violation."""
+    d, work, before = _seeded(tmp_path)
+    (work / ".git").mkdir()
+    (work / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (work / ".git" / "config").write_text("[core]\n\trepositoryformatversion = 0\n")
+    v = _grade(INTERVALS, before, work, d, "", 1.0, invoked=True)
+    assert ".git/HEAD" not in v.changed_files and ".git/config" not in v.changed_files
+    assert v.policy_ok, f"a .git dir triggered a policy failure: {v.failure_mode!r}"
+
+
+def test_the_recorded_wall_time_is_the_measured_one(tmp_path):
+    """`seconds=round(seconds, 1)` could be hardwired to 0.0. Nothing reads the field, so the
+    blast radius is a provenance value in every bundle silently becoming a constant while the
+    bundle advertises itself as a complete evidence record."""
+    d, work, before = _seeded(tmp_path)
+    assert _grade(INTERVALS, before, work, d, "", 12.34, invoked=True).seconds == 12.3
+    assert _grade(INTERVALS, before, work, d, "", 0.04, invoked=True).seconds == 0.0
