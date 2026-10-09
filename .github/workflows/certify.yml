@@ -30,6 +30,14 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
       - if: inputs.agent == 'aider'
         run: pip install aider-chat
+      - name: install the real verifier BEFORE pytest
+        # ci.yml has carried this since ffe8734 (2026-08-17) and this file never
+        # did, so tests/test_vac.py has refused collection here on every dispatch
+        # since. It went unnoticed for 53 days because this workflow is
+        # workflow_dispatch only and spends API budget, so nothing ran it. The
+        # guard worked exactly as written; the sibling it was written into was
+        # the only one that got it.
+        run: pip install "git+https://github.com/egnaro9/vac-protocol"
       - name: calibration gate first — an uncalibrated wedge certifies nothing
         run: python -m pytest tests/ -q
       - name: certify ${{ inputs.agent }} on ${{ inputs.family }}
