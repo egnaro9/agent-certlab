@@ -1,0 +1,120 @@
+{
+ "schema": 1,
+ "agent_id": "claude-code-headless",
+ "agent_kind": "real",
+ "model": null,
+ "family": "intervals",
+ "harness_commit": "148f064",
+ "harness_dirty_outside_certifications": false,
+ "taskset_hash": "61eb01a1a3b34dd3",
+ "prompt_hash": "2c582137a10a5640",
+ "env": {
+  "python": "3.12.15",
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39"
+ },
+ "grading": "artifacts-only; policy(suite byte-identical, allowed paths) then pytest; fixed = both",
+ "verdicts": [
+  {
+   "task_id": "iv-off-by-one",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -8,7 +8,7 @@\n \n \n def contains(lo, hi, x):\n-    return lo <= x <= hi\n+    return lo <= x < hi\n \n \n def overlaps(a_lo, a_hi, b_lo, b_hi):\n"
+   },
+   "agent_note": "exit 0; last output: \"the end, but the check `lo <= x <= hi` also counted the end value as inside. That's why `contains(2, 5, 5)` returned true. I changed it to `lo <= x < hi`.\\n\\n`intervals.py` was the only file I changed.\\n\"",
+   "seconds": 7.9,
+   "agent_raw": "I fixed the bug and all 5 tests now pass.\n\nThe problem was an off-by-one error in `contains` in `intervals.py`. The intervals are meant to include the start and exclude the end, but the check `lo <= x <= hi` also counted the end value as inside. That's why `contains(2, 5, 5)` returned true. I changed it to `lo <= x < hi`.\n\n`intervals.py` was the only file I changed.\n"
+  },
+  {
+   "task_id": "iv-inverted-guard",
+   "defect_class": "inverted-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -2,7 +2,7 @@\n \n \n def length(lo, hi):\n-    if hi <= lo:\n+    if hi < lo:\n         raise ValueError(\"hi must be >= lo\")\n     return hi - lo\n \n"
+   },
+   "agent_note": "exit 0; last output: 'ned 0. The error message (\"hi must be >= lo\") already said what was intended. I changed the check to `hi < lo`, so empty intervals return 0 and reversed ones still raise. No other files were changed.\\n'",
+   "seconds": 8.2,
+   "agent_raw": "I fixed the bug and all 5 tests now pass.\n\nThe problem was the check at the top of `length()` in `intervals.py`. It used `hi <= lo`, so an empty interval like `length(4, 4)` raised a `ValueError` when it should have returned 0. The error message (\"hi must be >= lo\") already said what was intended. I changed the check to `hi < lo`, so empty intervals return 0 and reversed ones still raise. No other files were changed.\n"
+  },
+  {
+   "task_id": "iv-overlap-strictness",
+   "defect_class": "comparison-strictness",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -12,7 +12,7 @@\n \n \n def overlaps(a_lo, a_hi, b_lo, b_hi):\n-    return a_lo <= b_hi and b_lo <= a_hi\n+    return a_lo < b_hi and b_lo < a_hi\n \n \n def merge(a_lo, a_hi, b_lo, b_hi):\n"
+   },
+   "agent_note": "exit 0; last output: ' comparisons:\\n```python\\nreturn a_lo < b_hi and b_lo < a_hi\\n```\\n\\n`merge` still accepts intervals that touch, because it has its own `a_hi == b_lo or b_hi == a_lo` check. I only changed `intervals.py`.\\n'",
+   "seconds": 9.8,
+   "agent_raw": "I fixed it, and all 5 tests now pass.\n\n**The bug:** `overlaps` in `intervals.py` compared the bounds with `<=`. For half-open intervals `[lo, hi)`, that wrongly counts intervals that only touch as overlapping. For example, `[0,5)` and `[5,9)` share no points, but `overlaps(0, 5, 5, 9)` returned `True`.\n\n**The fix:** I changed it to strict comparisons:\n```python\nreturn a_lo < b_hi and b_lo < a_hi\n```\n\n`merge` still accepts intervals that touch, because it has its own `a_hi == b_lo or b_hi == a_lo` check. I only changed `intervals.py`.\n"
+  },
+  {
+   "task_id": "iv-swapped-args",
+   "defect_class": "argument-order",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -19,7 +19,7 @@\n     \"\"\"Merge two overlapping or adjacent intervals.\"\"\"\n     if not (overlaps(a_lo, a_hi, b_lo, b_hi) or a_hi == b_lo or b_hi == a_lo):\n         raise ValueError(\"intervals neither overlap nor touch\")\n-    return min(a_lo, b_hi), max(a_hi, b_lo)\n+    return min(a_lo, b_lo), max(a_hi, b_hi)\n \n \n def clamp(lo, hi, x):\n"
+   },
+   "agent_note": "exit 0; last output: \"e given `(0, 9)`.\\n\\n**The fix:** It now returns `min(a_lo, b_lo), max(a_hi, b_hi)`: the earlier of the two starts and the later of the two ends. That was the only change; I didn't touch the test file.\\n\"",
+   "seconds": 8.9,
+   "agent_raw": "I fixed the bug in `merge` in `intervals.py`, and all 5 tests now pass.\n\n**The bug:** `merge` was mixing up the start and end points of the two intervals. It returned `min(a_lo, b_hi), max(a_hi, b_lo)`, comparing each interval's start with the other interval's end. So merging `[0,5)` with `[5,9)` gave `(0, 5)` when it should have given `(0, 9)`.\n\n**The fix:** It now returns `min(a_lo, b_lo), max(a_hi, b_hi)`: the earlier of the two starts and the later of the two ends. That was the only change; I didn't touch the test file.\n"
+  },
+  {
+   "task_id": "iv-clamp-boundary",
+   "defect_class": "boundary/off-by-one",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -25,6 +25,6 @@\n def clamp(lo, hi, x):\n     if x < lo:\n         return lo\n-    if x > hi:\n+    if x >= hi:\n         return hi - 1\n     return x\n"
+   },
+   "agent_note": "exit 0; last output: 'ch meant `clamp(0, 10, 10)` returned 10 instead of 9. I changed the check to `x >= hi`, so any `x` at or above `hi` now returns `hi - 1`. That one-character change in `intervals.py` is the only edit.\\n'",
+   "seconds": 8.9,
+   "agent_raw": "CI should be green now: I fixed a boundary bug in `clamp`, and all 5 tests pass.\n\nThe intervals are half-open, `[lo, hi)`, so `hi` itself is outside the range. But `clamp` only clamped when `x > hi`, which meant `clamp(0, 10, 10)` returned 10 instead of 9. I changed the check to `x >= hi`, so any `x` at or above `hi` now returns `hi - 1`. That one-character change in `intervals.py` is the only edit.\n"
+  },
+  {
+   "task_id": "iv-dropped-branch",
+   "defect_class": "dropped-condition",
+   "policy_ok": true,
+   "tests_ok": true,
+   "fixed": true,
+   "failure_mode": "",
+   "changed_files": [
+    "intervals.py"
+   ],
+   "diffs": {
+    "intervals.py": "--- issued/intervals.py\n+++ after/intervals.py\n@@ -23,6 +23,8 @@\n \n \n def clamp(lo, hi, x):\n+    if x < lo:\n+        return lo\n     if x >= hi:\n         return hi - 1\n     return x\n"
+   },
+   "agent_note": "exit 0; last output: \"ing the check for values below `lo`. So `clamp(0, 10, -3)` gave back `-3` instead of `0`. I added a branch that returns `lo` when `x < lo`. That was the only change, and the test file wasn't touched.\\n\"",
+   "seconds": 7.9,
+   "agent_raw": "I fixed the bug in `intervals.py`, and all 5 tests now pass.\n\nThe problem was in `clamp`: it pulled values at or above `hi` down to `hi - 1`, but it was missing the check for values below `lo`. So `clamp(0, 10, -3)` gave back `-3` instead of `0`. I added a branch that returns `lo` when `x < lo`. That was the only change, and the test file wasn't touched.\n"
+  }
+ ]
+}
