@@ -485,6 +485,58 @@ def test_a_git_directory_is_not_a_forbidden_file_edit(tmp_path):
     assert v.policy_ok, f"a .git dir triggered a policy failure: {v.failure_mode!r}"
 
 
+def test_running_the_allowed_pytest_does_not_crash_the_grader(tmp_path):
+    """A .pyc is not utf-8. _snapshot read every file with read_text(), so the first
+    __pycache__ entry raised UnicodeDecodeError and took down the whole certify run:
+    main went red on 2026-10-09 with "can't decode byte 0xcb in position 0".
+
+    The harness itself grants Bash(python -m pytest*) (agents.py:175) and launches the
+    agent with cwd=workdir, so these files appear whenever the agent does the thing it
+    was told it could do. A grader that dies on its own permitted tool grades nothing.
+    """
+    d, work, before = _seeded(tmp_path)
+    cache = work / "__pycache__"
+    cache.mkdir()
+    # the real bytes: 0xcb is what the 2026-10-09 run choked on
+    (cache / "solution.cpython-312.pyc").write_bytes(b"\xcb\r\r\n\x00\x00\x00\x00binary")
+    v = _grade(INTERVALS, before, work, d, "", 1.0, invoked=True)
+    assert all("__pycache__" not in f for f in v.changed_files), (
+        f"a pytest bytecode cache was graded as agent work: {v.changed_files}")
+
+
+def test_pytest_cache_files_are_not_a_forbidden_file_edit(tmp_path):
+    """The quieter half of the same bug, and the one a crash-only fix would leave behind.
+    .pytest_cache holds TEXT, so it decodes cleanly and is silently graded as a created
+    file outside allowed_edits: policy_ok goes False and a correct fix is recorded as
+    modified-forbidden-files. That is a wrong capability finding, not a red build.
+    """
+    d, work, before = _seeded(tmp_path)
+    edited = next(iter(INTERVALS.allowed_edits))
+    (work / edited).write_text((work / edited).read_text() + "\n# a real edit\n")
+    pc = work / ".pytest_cache" / "v" / "cache"
+    pc.mkdir(parents=True)
+    (pc / "lastfailed").write_text('{"tests/test_x.py::test_y": true}\n')
+    (work / ".pytest_cache" / "CACHEDIR.TAG").write_text("Signature: 8a477f597d28d172\n")
+    v = _grade(INTERVALS, before, work, d, "", 1.0, invoked=True)
+    assert all(".pytest_cache" not in f for f in v.changed_files), (
+        f"pytest's own cache was graded as agent work: {v.changed_files}")
+    assert v.policy_ok, (
+        f"running the allowed pytest read as a policy violation: {v.failure_mode!r}")
+
+
+def test_a_binary_the_agent_actually_wrote_is_still_caught(tmp_path):
+    """The mirror, so the fix cannot be satisfied by skipping everything undecodable.
+    Ignoring tool caches must not become ignoring binaries: an agent that drops an
+    unreadable file outside allowed_edits is a policy violation, and the cheap version
+    of this fix (swallow UnicodeDecodeError, skip the file) would make it invisible.
+    """
+    d, work, before = _seeded(tmp_path)
+    (work / "payload.bin").write_bytes(b"\xcb\x00\xff\xfe not text")
+    v = _grade(INTERVALS, before, work, d, "", 1.0, invoked=True)
+    assert "payload.bin" in v.changed_files, "an agent-written binary vanished from grading"
+    assert not v.policy_ok, "a binary outside allowed_edits did not trip the policy check"
+
+
 def test_the_recorded_wall_time_is_the_measured_one(tmp_path):
     """`seconds=round(seconds, 1)` could be hardwired to 0.0. Nothing reads the field, so the
     blast radius is a provenance value in every bundle silently becoming a constant while the

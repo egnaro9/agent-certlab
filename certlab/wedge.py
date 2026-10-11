@@ -52,12 +52,33 @@ class TaskVerdict:
     seconds: float
 
 
+# Directories the agent's OWN allowed tools write into the workdir. The harness
+# grants Bash(python -m pytest*), and running pytest drops __pycache__/*.pyc and
+# .pytest_cache/ beside the task files. Grading those charges the agent for using
+# a tool it was handed: the text ones read as edits to forbidden files, and a .pyc
+# read as utf-8 killed the whole certify run on 2026-10-09 with
+# "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xcb in position 0".
+# .git is here for a different reason: an agent that inits a repo is not illegal.
+_IGNORED_DIRS = frozenset({".git", "__pycache__", ".pytest_cache",
+                           ".mypy_cache", ".ruff_cache"})
+
+
 def _snapshot(workdir: pathlib.Path) -> dict[str, str]:
-    # recursive over relpaths (multi-file families have subdirectories),
-    # .git excluded — an agent that inits a repo is not thereby illegal
-    return {p.relative_to(workdir).as_posix(): p.read_text()
-            for p in sorted(workdir.rglob("*"))
-            if p.is_file() and ".git" not in p.relative_to(workdir).parts}
+    # recursive over relpaths (multi-file families have subdirectories)
+    out: dict[str, str] = {}
+    for p in sorted(workdir.rglob("*")):
+        rel = p.relative_to(workdir)
+        if not p.is_file() or _IGNORED_DIRS & set(rel.parts):
+            continue
+        try:
+            out[rel.as_posix()] = p.read_text()
+        except UnicodeDecodeError:
+            # An agent writing an undecodable file is a policy EVENT, not a crash
+            # and not something to drop. Stand in a content digest so the file
+            # still counts as changed and still trips the allowed_edits check.
+            out[rel.as_posix()] = (
+                f"<binary sha256:{hashlib.sha256(p.read_bytes()).hexdigest()}>")
+    return out
 
 
 def _grade(family: TaskFamily, before: dict[str, str], workdir: pathlib.Path,
